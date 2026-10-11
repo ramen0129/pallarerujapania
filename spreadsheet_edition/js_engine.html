@@ -1,0 +1,1400 @@
+<script>
+/**
+ * 『パラレル・ジャパニア：クロニクル 〜失われた人権の180分〜』
+ * 428型 ゲーム進行・タイムブロック（Hour制）エンジンモジュール
+ */
+var MASTER_DB = {
+  tips: TIPS_MASTER,
+  nodes: Object.assign(
+    {},
+    SCENARIO_REN,
+    SCENARIO_ELENA,
+    SCENARIO_DANIEL,
+    SCENARIO_CLIMAX,
+    (typeof SCENARIO_SHIN !== "undefined" ? SCENARIO_SHIN : {}),
+    (typeof SCENARIO_AUGUST !== "undefined" ? SCENARIO_AUGUST : {}),
+    (typeof SCENARIO_TALK !== "undefined" ? SCENARIO_TALK : {})
+  )
+};
+
+var GameEngine = (function() {
+  var currentParagraphIndex = 0;
+  var currentParagraphs = [];
+  var trueEndStep = 0;
+
+  // 428 バタフライエフェクト：BAD END到達時に直前の選択肢へ復帰するための親ノード辞書
+  var BAD_END_PREVIOUS_NODES = {
+    "BAD_01": "C_1015",
+    "BAD_02": "A_1045_WATERGATE",
+    "BAD_03": "C_1110",
+    "BAD_04": "B_1115",
+    "BAD_05": "A_1130",
+    "BAD_06": "CLIMAX_DECISION",
+    "BAD_07": "CLIMAX_DECISION",
+    "BAD_08": "CLIMAX_DECISION",
+    "BAD_09": "CLIMAX_SCAN",
+    "BAD_10": "B_1045",
+    "BAD_11": "B_1015",
+    "BAD_12": "A_1125",
+    "BAD_13": "B_1145",
+    "BAD_14": "C_1140",
+    "BAD_15": "B_1145",
+    "BAD_16": "C_1045",
+    "BAD_17": "A_1145",
+    "BAD_18": "B_1145",
+    "BAD_19": "A_1130",
+    "BAD_20": "A_1100",
+    "BAD_21": "B_1100",
+    "BAD_22": "C_1140",
+    "BAD_23": "CLIMAX_DECISION",
+    "BAD_24": "CLIMAX_REN_DECISION",
+    "BAD_25": "CLIMAX_ELENA_DECISION",
+    "BAD_26": "CLIMAX_DANIEL_DECISION"
+  };
+
+  var KEEP_OUT_PREVIOUS_NODES = {
+    "KEEP_OUT_A1": "A_1045_WATERGATE",
+    "KEEP_OUT_A2": "A_1100",
+    "KEEP_OUT_A3": "A_1145",
+    "KEEP_OUT_B1": "B_1100",
+    "KEEP_OUT_B2": "B_1145",
+    "KEEP_OUT_C1": "C_1100",
+    "KEEP_OUT_C2": "C_1140",
+    "KEEP_OUT_REN_CLIMAX": "A_1150",
+    "CLIMAX_KEEPOUT_A": "CLIMAX_REN_DECISION",
+    "CLIMAX_KEEPOUT_B": "CLIMAX_ELENA_STANDOFF",
+    "CLIMAX_KEEPOUT_C": "CLIMAX_DANIEL_STANDOFF"
+  };
+
+  function launchNode(nodeId, jumpContext) {
+    var state = TimelineState.getState();
+    var node = MASTER_DB.nodes[nodeId];
+    if (!node) {
+      console.error("Node not found:", nodeId);
+      return;
+    }
+
+    TimelineState.rollbackFutureSlots(nodeId);
+
+    var isAlreadyVisited = (state.visitedNodes.indexOf(nodeId) !== -1);
+    if (!isAlreadyVisited) {
+      state.visitedNodes.push(nodeId);
+    }
+    state.currentNodeKey = nodeId;
+    if (node.char && node.char !== "ALL") {
+      state.currentChar = node.char;
+      if (!state.lastCharNodes) state.lastCharNodes = { A: "A_1000", B: "B_1000", C: "C_1000" };
+      // 428 本質設計：BAD END または KEEP OUT ノードでは lastCharNodes を上書きしない！
+      // （他時間軸で因果を書き換えて戻ってきた際、直前の選択肢から再開できるようにするため）
+      if (!node.isBadEnd && !node.isKeepOut) {
+        state.lastCharNodes[node.char] = nodeId;
+      }
+    }
+
+    // 428 アワー進捗の自動マーキング
+    if (nodeId === "A_1100") TimelineState.markHourClear("A", 1);
+    if (nodeId === "B_1100") TimelineState.markHourClear("B", 1);
+    if (nodeId === "C_1100") TimelineState.markHourClear("C", 1);
+    if (nodeId === "A_1150") TimelineState.markHourClear("A", 2);
+    if (nodeId === "B_1150") TimelineState.markHourClear("B", 2);
+    if (nodeId === "C_1150") TimelineState.markHourClear("C", 2);
+
+    var prog = TimelineState.getHourProgress();
+
+    if (node.unlockTrophy) {
+      TimelineState.unlockTrophy(node.unlockTrophy);
+    }
+    if (nodeId === "SIDE_AUGUST" || (node.unlockTrophy && node.unlockTrophy === "augustMaster")) {
+      TimelineState.markTipMastered("オーガスト卿");
+    }
+
+    if (node.isTrueEnd && !state.trueEndScanned) {
+      startTrueEndSequence();
+      return;
+    }
+    if (node.isClearEnd) {
+      triggerGoodEnd(node);
+      return;
+    }
+    if (node.isKeepOut) {
+      showKeepOut(node);
+      return;
+    }
+    // クライマックス中間ドラマノード読了後のBAD END遷移、または段落のないBAD ENDは直ちにカード演出へ移行
+    var fromClimaxDrama = state.currentNodeKey && (
+      state.currentNodeKey.startsWith("BAD_REN_") ||
+      state.currentNodeKey.startsWith("BAD_ELENA_") ||
+      state.currentNodeKey.startsWith("BAD_DANIEL_")
+    );
+    if (node.isBadEnd && (fromClimaxDrama || !node.paragraphs || node.paragraphs.length === 0)) {
+      triggerBadEnd(nodeId);
+      return;
+    }
+
+    UIController.switchView('novel');
+    UIController.updateHeaderTabs();
+
+    // 【旋律柱】キャラクター・シーンに応じたプロシージャルBGM再生
+    if (typeof AudioEngine !== "undefined" && AudioEngine.playBGM) {
+      if (node.isBadEnd) {
+        AudioEngine.stopBGM(0.3);
+      } else if (nodeId === "BONUS_TAWAKICHI") {
+        AudioEngine.playBGM("tawakichi");
+      } else if (nodeId === "TRUE_SECRET_END" || nodeId === "NORMAL_CLEAR") {
+        AudioEngine.playBGM("ending");
+      } else if (nodeId && nodeId.startsWith("CLIMAX_")) {
+        AudioEngine.playBGM("climax");
+      } else if (node.char === "A") {
+        AudioEngine.playBGM("ren");
+      } else if (node.char === "B") {
+        AudioEngine.playBGM("elena");
+      } else if (node.char === "C") {
+        AudioEngine.playBGM("daniel");
+      }
+    }
+
+    // 428式 因果跳躍・バタフライエフェクト演出のトリガー
+    if (jumpContext && jumpContext.isJump) {
+      if (jumpContext.type === "badend") {
+        UIController.showCausalityShift("運命跳躍：因果の分岐点へ到達しました。新たな選択で未来を塗り替えよ！", "CAUSALITY JUMP // 運命跳躍");
+      } else if (jumpContext.type === "keepout") {
+        UIController.showCausalityShift("因果遡行：KEEP OUT解除の鍵を握る時間軸へ跳躍しました！", "CAUSALITY JUMP // 因果遡行");
+      } else if (jumpContext.type === "chart") {
+        UIController.showCausalityShift("時間軸跳躍：選択したタイムラインへ運命を移行しました。", "TIMELINE JUMP // 時間軸跳躍");
+      }
+    } else if (state.causalityModified) {
+      state.causalityModified = false;
+      UIController.showCausalityShift("因果変転：別の時間軸の決断が波及し、運命のシナリオが変化しました！", "BUTTERFLY EFFECT // 因果変転");
+    }
+
+    // クライマックス緊張感の心音演出
+    if (nodeId === "CLIMAX_REN_STANDOFF") {
+      AudioEngine.play('heartbeat');
+    }
+
+    document.getElementById("sceneTimeBadge").textContent = node.time || "12:00";
+    document.getElementById("sceneCharBadge").textContent = "[" + (node.charName || "") + "]";
+    document.getElementById("sceneTitleBadge").textContent = node.title || "";
+
+    var portThumb = document.getElementById("novelHeaderPortrait");
+    if (portThumb && typeof CHARACTER_IMAGES !== "undefined") {
+      var cKey = (node.char && node.char !== "ALL") ? node.char : state.currentChar;
+      portThumb.src = CHARACTER_IMAGES[cKey] || CHARACTER_IMAGES["A"];
+    }
+
+    // node.paragraphs 自体の破壊的変更（増殖バグ）を防ぐため、常に新しい配列として段落を正規化展開
+    var rawParas = node.paragraphs || [];
+    currentParagraphs = [];
+    for (var pi = 0; pi < rawParas.length; pi++) {
+      var item = rawParas[pi];
+      if (typeof item === 'string' && item.indexOf('\n') !== -1) {
+        var isCenter = (item.indexOf('[CENTER]') !== -1 || item.indexOf('para-center') !== -1);
+        var isImpact = (item.indexOf('[IMPACT]') !== -1 || item.indexOf('para-impact') !== -1);
+        var isWhisper = (item.indexOf('[WHISPER]') !== -1 || item.indexOf('para-whisper') !== -1);
+        var rawText = item.replace(/\[\/?(CENTER|IMPACT|WHISPER)\]/g, '');
+        var subParas = rawText.split(/\n+/).filter(function(s) { return s.trim().length > 0; });
+        var tagWrap = isCenter ? function(s) { return '[CENTER]' + s + '[/CENTER]'; }
+                    : isImpact ? function(s) { return '[IMPACT]' + s + '[/IMPACT]'; }
+                    : isWhisper ? function(s) { return '[WHISPER]' + s + '[/WHISPER]'; }
+                    : function(s) { return s; };
+        for (var spi = 0; spi < subParas.length; spi++) {
+          currentParagraphs.push(tagWrap(subParas[spi]));
+        }
+      } else {
+        currentParagraphs.push(item);
+      }
+    }
+    currentParagraphIndex = 0;
+
+    // 既読ノードであればスキップボタンを表示
+    var btnSkip = document.getElementById("btnSkipNovel");
+    if (btnSkip) {
+      btnSkip.classList.toggle("hidden", !isAlreadyVisited || (currentParagraphs.length <= 1));
+    }
+
+    var list = document.getElementById("paragraphsList");
+    list.innerHTML = "";
+    document.getElementById("choicesWrapper").classList.add("hidden");
+    document.getElementById("choicesWrapper").innerHTML = "";
+
+    // 章間バナー表示制御（選択肢エリアから分離）
+    var isHour1EndNode = (nodeId === "A_1100" || nodeId === "B_1100" || nodeId === "C_1100");
+    var bannerEl = document.getElementById("novelChapterBanner");
+    if (bannerEl) {
+      // ユーザーUI/UX指摘対応：ブレイクスルーを一度閲覧した後（state.hour1PreviewSeen === true）のみ常時表示。
+      // 初回来訪時（未閲覧）は本文を読む前にいきなり出さず、読了後の自動モーダル演出（アハ体験）を保護する。
+      if (isHour1EndNode && prog.hour1.allClear && state.hour1PreviewSeen) {
+        bannerEl.className = "mb-3 p-3 bg-gradient-to-r from-emerald-950/80 via-neutral-900 to-sky-950/80 border border-emerald-500/50 rounded-xl flex items-center justify-between text-xs";
+        bannerEl.innerHTML = '<span class="text-emerald-300 font-bold flex items-center gap-1.5"><span>🎬</span><span>【第1アワー突破！】次章予告編・あらすじを確認できます</span></span>'
+          + '<button id="btnChapterPreviewTrigger" class="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg font-mono font-bold cursor-pointer">PREVIEW ▶</button>';
+        bannerEl.classList.remove("hidden");
+        var trigBtn = document.getElementById("btnChapterPreviewTrigger");
+        if (trigBtn) {
+          trigBtn.onclick = function(e) {
+            e.stopPropagation();
+            UIController.showHour1Preview();
+          };
+        }
+      } else if (nodeId === "CLIMAX_HUB" && prog.hour2.allClear && state.hour2PreviewSeen) {
+        bannerEl.className = "mb-3 p-3 bg-gradient-to-r from-amber-950/80 via-neutral-900 to-red-950/80 border border-amber-500/50 rounded-xl flex items-center justify-between text-xs";
+        bannerEl.innerHTML = '<span class="text-amber-300 font-bold flex items-center gap-1.5"><span>🎬</span><span>【第2アワー突破！】クライマックス予告編・あらすじを確認できます</span></span>'
+          + '<button id="btnChapterPreviewTrigger2" class="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg font-mono font-bold cursor-pointer">PREVIEW ▶</button>';
+        bannerEl.classList.remove("hidden");
+        var trigBtn2 = document.getElementById("btnChapterPreviewTrigger2");
+        if (trigBtn2) {
+          trigBtn2.onclick = function(e) {
+            e.stopPropagation();
+            UIController.showHour2Preview();
+          };
+        }
+      } else {
+        bannerEl.classList.add("hidden");
+        bannerEl.innerHTML = "";
+      }
+    }
+
+    // 既読かつ第1アワー突破済み、かつブレイクスルー閲覧済みであればスキップ可能
+    if (isHour1EndNode && isAlreadyVisited && prog.hour1.allClear && state.hour1PreviewSeen) {
+      skipToChoices();
+    } else {
+      showNextParagraph();
+    }
+    TimelineState.syncServer(node.title);
+  }
+
+  function showNextParagraph() {
+    var state = TimelineState.getState();
+    while (currentParagraphIndex < currentParagraphs.length) {
+      var pItem = currentParagraphs[currentParagraphIndex];
+      var pText = (typeof pItem === 'function') ? pItem(state) : pItem;
+      currentParagraphIndex++;
+
+      // 動的関数から \n を含む複数段落が返された場合のみキューに挿入
+      if (typeof pItem === 'function' && pText && typeof pText === 'string' && pText.indexOf('\n') !== -1) {
+        var isCenter = (pText.indexOf('[CENTER]') !== -1 || pText.indexOf('para-center') !== -1);
+        var isImpact = (pText.indexOf('[IMPACT]') !== -1 || pText.indexOf('para-impact') !== -1);
+        var isWhisper = (pText.indexOf('[WHISPER]') !== -1 || pText.indexOf('para-whisper') !== -1);
+        var rawText = pText.replace(/\[\/?(CENTER|IMPACT|WHISPER)\]/g, '');
+
+        var subParas = rawText.split(/\n+/).filter(function(s) { return s.trim().length > 0; });
+        if (subParas.length > 0) {
+          var tagWrap = isCenter ? function(s) { return '[CENTER]' + s + '[/CENTER]'; }
+                      : isImpact ? function(s) { return '[IMPACT]' + s + '[/IMPACT]'; }
+                      : isWhisper ? function(s) { return '[WHISPER]' + s + '[/WHISPER]'; }
+                      : function(s) { return s; };
+          pText = tagWrap(subParas[0]);
+          var remaining = subParas.slice(1).map(tagWrap);
+          currentParagraphs.splice.apply(currentParagraphs, [currentParagraphIndex, 0].concat(remaining));
+        }
+      }
+
+      if (pText && typeof pText === 'string' && pText.trim().length > 0) {
+        AudioEngine.play('tap');
+        var pEl = document.createElement("p");
+
+        // 428式 タイポグラフィ・フォーカス（中央配置・インパクト・囁き）の自動クラス判定
+        if (pText.indexOf('class="para-center"') !== -1 || pText.indexOf("para-center") !== -1 || pText.indexOf('[CENTER]') !== -1) {
+          pEl.className = "para-center";
+          pText = pText.replace(/\[CENTER\]/g, '').replace(/\[\/CENTER\]/g, '');
+        } else if (pText.indexOf('class="para-impact"') !== -1 || pText.indexOf("para-impact") !== -1 || pText.indexOf('[IMPACT]') !== -1) {
+          pEl.className = "para-impact";
+          pText = pText.replace(/\[IMPACT\]/g, '').replace(/\[\/IMPACT\]/g, '');
+        } else if (pText.indexOf('class="para-whisper"') !== -1 || pText.indexOf("para-whisper") !== -1 || pText.indexOf('[WHISPER]') !== -1) {
+          pEl.className = "para-whisper";
+          pText = pText.replace(/\[WHISPER\]/g, '').replace(/\[\/WHISPER\]/g, '');
+        } else {
+          pEl.className = "para-in leading-relaxed";
+        }
+        pEl.innerHTML = pText;
+
+        document.getElementById("paragraphsList").appendChild(pEl);
+
+        // TIPSリンクのスタイル適用（未読:青 / 既読:黄 / クイズ正解:ピンク / オーガスト真エンド:赤）
+        if (typeof UIController !== "undefined" && UIController.applyTipLinkStyles) {
+          UIController.applyTipLinkStyles(pEl);
+        }
+
+        var tapZone = document.getElementById("novelTapZone");
+        tapZone.scrollTop = tapZone.scrollHeight;
+
+        // 次以降に表示すべき段落が残っているかを判定
+        var hasMore = false;
+        for (var pi = currentParagraphIndex; pi < currentParagraphs.length; pi++) {
+          var nextItem = currentParagraphs[pi];
+          var nextText = (typeof nextItem === 'function') ? nextItem(state) : nextItem;
+          if (nextText && typeof nextText === 'string' && nextText.trim().length > 0) {
+            hasMore = true;
+            break;
+          }
+        }
+
+        var prompt = document.getElementById("promptNext");
+        if (hasMore) {
+          prompt.classList.remove("hidden");
+        } else {
+          prompt.classList.add("hidden");
+          renderChoices();
+        }
+        return;
+      }
+    }
+
+    // 既に全段落を表示し終えている場合の画面タップ
+    var node = MASTER_DB.nodes[state.currentNodeKey];
+    if (node) {
+      if (node.isBadEnd) {
+        triggerBadEnd(node.id);
+      } else if (node.id && (node.id.startsWith("BAD_REN_") || node.id.startsWith("BAD_ELENA_") || node.id.startsWith("BAD_DANIEL_"))) {
+        var targetBad = (node.choices && node.choices[0] && node.choices[0].next) ? node.choices[0].next : null;
+        if (targetBad) triggerBadEnd(targetBad);
+      }
+    }
+  }
+
+  function renderChoices() {
+    var state = TimelineState.getState();
+    var node = MASTER_DB.nodes[state.currentNodeKey];
+    if (!node) return;
+
+    var wrapper = document.getElementById("choicesWrapper");
+    wrapper.innerHTML = "";
+    wrapper.classList.remove("hidden");
+
+    // クライマックス中間ドラマノード読了時：余計な選択肢ボタンを一切挟まず、即座にBAD ENDカードへ直結移行！
+    var isClimaxDrama = node.id && (
+      node.id.startsWith("BAD_REN_") ||
+      node.id.startsWith("BAD_ELENA_") ||
+      node.id.startsWith("BAD_DANIEL_")
+    );
+    if (isClimaxDrama) {
+      var targetBad = (node.choices && node.choices[0] && node.choices[0].next) ? node.choices[0].next : null;
+      if (targetBad) {
+        triggerBadEnd(targetBad);
+        return;
+      }
+    }
+
+    // BAD END ノード到達時の破滅結末ボタン（最優先で描画）
+    if (node.isBadEnd) {
+      var beBtn = document.createElement("button");
+      beBtn.className = "w-full text-left p-4 bg-gradient-to-r from-red-950/90 to-neutral-900 hover:from-red-900/90 hover:to-neutral-850 border-2 border-red-500 rounded-xl text-xs sm:text-sm font-black text-red-200 shadow-xl flex items-center justify-between group active:scale-[0.99] transition-all cursor-pointer animate-pulse";
+      beBtn.innerHTML = '<span class="group-hover:text-red-300">💀 破滅の結末へ……</span>'
+        + '<span class="text-red-400 font-mono text-xs font-bold">TERMINATED ▶</span>';
+      beBtn.onclick = function(e) {
+        e.stopPropagation();
+        triggerBadEnd(node.id);
+      };
+      wrapper.appendChild(beBtn);
+
+      var tapZone = document.getElementById("novelTapZone");
+      if (tapZone) {
+        setTimeout(function() { tapZone.scrollTop = tapZone.scrollHeight; }, 60);
+      }
+      return;
+    }
+
+    if (!node.choices) return;
+
+    var prog = TimelineState.getHourProgress();
+
+    // 428 アワー終端判定：Hour 1 終端（11:00）の処理
+    if (node.id === "A_1100" || node.id === "B_1100" || node.id === "C_1100") {
+      if (!prog.hour1.allClear) {
+        var tbcBtn = document.createElement("button");
+        tbcBtn.className = "w-full text-left p-4 bg-gradient-to-r from-amber-950/80 to-neutral-900 border-2 border-amber-400 rounded-xl text-xs sm:text-sm font-black text-amber-200 shadow-xl flex items-center justify-between group cursor-pointer";
+        tbcBtn.innerHTML = '<span>⏳【第1アワー完了】タイムラインへ戻り他の主人公を進める</span>'
+          + '<span class="text-amber-400 font-mono text-xs">TO BE CONTINUED ▶</span>';
+        tbcBtn.onclick = function(e) {
+          e.stopPropagation();
+          UIController.showToBeContinued(
+            node.char,
+            1,
+            "第1アワー（10:00〜11:00）を突破しました！",
+            "3人全員が11:00に到達するまで、この主人公は一時待機となります。他の主人公を選択してタイムラインを進めてください。"
+          );
+        };
+        wrapper.appendChild(tbcBtn);
+        var tapZone = document.getElementById("novelTapZone");
+        if (tapZone) {
+          setTimeout(function() { tapZone.scrollTop = tapZone.scrollHeight; }, 60);
+        }
+        // ユーザー体験最適化：選択肢到達時に自動的にTO BE CONTINUEDモーダルを表示
+        setTimeout(function() {
+          if (typeof UIController !== "undefined" && UIController.showToBeContinued) {
+            UIController.showToBeContinued(
+              node.char,
+              1,
+              "第1アワー（10:00〜11:00）を突破しました！",
+              "3人全員が11:00に到達するまで、この主人公は一時待機となります。他の主人公を選択してタイムラインを進めてください。"
+            );
+          }
+        }, 400);
+        return;
+      } else {
+        // 全員がHour 1を突破した場合：未閲覧なら全画面モーダルでブレイクスルー＆次章予告編を自動再生！
+        if (!state.hour1PreviewSeen) {
+          setTimeout(function() {
+            if (typeof UIController !== "undefined" && UIController.showHour1Preview) {
+              UIController.showHour1Preview();
+            }
+          }, 300);
+        }
+        // choicesWrapper には純粋な第2アワー選択肢（node.choices）を描画する
+      }
+    }
+
+
+    // クライマックス視点選択ハブ（CLIMAX_HUB）用：システム案内ヘッダーバナーを提示 ＆ 第2アワー突破予告自動再生
+    if (node.id === "CLIMAX_HUB") {
+      if (prog.hour2.allClear && !state.hour2PreviewSeen) {
+        setTimeout(function() {
+          if (typeof UIController !== "undefined" && UIController.showHour2Preview) {
+            UIController.showHour2Preview();
+          }
+        }, 300);
+      }
+      var hubHeader = document.createElement("div");
+      hubHeader.className = "w-full p-2.5 mb-2.5 rounded-xl bg-gradient-to-r from-sky-950/90 via-neutral-900 to-sky-950/90 border border-sky-400/60 text-sky-200 text-xs font-mono font-bold flex items-center justify-center gap-2 shadow-xl animate-pulse";
+      hubHeader.innerHTML = '<span class="text-sky-400">⚡</span><span>【視点選択】最終決戦へ突入する主人公を選択してください</span><span class="text-sky-400 font-mono text-[10px] bg-sky-900/60 px-1.5 py-0.5 rounded border border-sky-400/30">SYSTEM</span>';
+      wrapper.appendChild(hubHeader);
+    }
+
+    node.choices.forEach(function(ch) {
+      // 古遺物3つ（PIECE_A, PIECE_B, PIECE_C）が揃っていない場合はシークレット選択肢を完全非表示
+      if (ch.requiresSecretPieces) {
+        var flags = state.userFlags || [];
+        var objFlags = state.flags || {};
+        var slots = state.slots || {};
+        var hasA = flags.indexOf("PIECE_A") !== -1 || objFlags["PIECE_A"] || (slots["A_1030"] === "A_TAKE_PLATE");
+        var hasB = flags.indexOf("PIECE_B") !== -1 || objFlags["PIECE_B"] || (slots["B_1030_ITEM"] === "B_TAKE_PLATE");
+        var hasC = flags.indexOf("PIECE_C") !== -1 || objFlags["PIECE_C"] || (slots["C_1030_ITEM"] === "C_TAKE_BOX");
+        if (!hasA || !hasB || !hasC) {
+          return; // 1つでも欠けていれば表示しない！
+        }
+      }
+
+      // クリア後限定選択肢（古遺物回収イベント）の非表示制御
+      if (ch.requiresClear && !TimelineState.hasClearedOnce()) {
+        return; // 1周目（未クリア時）は表示しない
+      }
+
+      // 動的出現条件（condition 関数）の評価
+      if (typeof ch.condition === "function" && !ch.condition(state)) {
+        return; // 条件を満たさない場合は表示しない
+      }
+
+      // 選択肢のメタタグ（【…】）を安全に除去
+      var cleanText = ch.text ? ch.text.replace(/^【.*?】\s*/, '') : "";
+
+      // 0. 特殊アクション（百科事典オープン / ホーム復帰）
+      if (ch.action === "openWiki") {
+        var btn = document.createElement("button");
+        btn.className = "w-full text-left p-4 bg-gradient-to-r from-sky-950/90 to-neutral-900 hover:from-sky-900/90 hover:to-neutral-850 border-2 border-sky-500 rounded-xl text-xs sm:text-sm font-black text-sky-200 shadow-xl flex items-center justify-between group active:scale-[0.99] transition-all cursor-pointer";
+        btn.innerHTML = '<span class="group-hover:text-sky-300">📖 ' + cleanText + '</span><span class="text-sky-400 font-mono text-xs font-bold">WIKI ARCHIVE ▶</span>';
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          UIController.switchView('auth');
+          UIController.renderTimeBlockStatus();
+          UIController.openWikiArchive();
+        };
+        wrapper.appendChild(btn);
+        return;
+      }
+      if (ch.action === "returnHome") {
+        var btn = document.createElement("button");
+        btn.className = "w-full text-left p-4 bg-gradient-to-r from-neutral-900 to-neutral-950 hover:bg-neutral-850 border border-neutral-700 rounded-xl text-xs sm:text-sm font-bold text-neutral-200 shadow-xl flex items-center justify-between group active:scale-[0.99] transition-all cursor-pointer";
+        btn.innerHTML = '<span class="group-hover:text-amber-300">🏠 ' + cleanText + '</span><span class="text-neutral-400 font-mono text-xs">HOME ▶</span>';
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          UIController.switchView('auth');
+          UIController.renderTimeBlockStatus();
+        };
+        wrapper.appendChild(btn);
+        return;
+      }
+
+      // 1. checkSecret
+      if (ch.checkSecret) {
+        var btn = document.createElement("button");
+        btn.className = "w-full text-left p-3.5 bg-amber-900/40 hover:bg-amber-800/60 border border-amber-500 rounded-xl text-xs sm:text-sm font-bold text-amber-100 transition-all flex items-center justify-between group shadow-lg";
+        btn.innerHTML = '<span class="group-hover:text-amber-300 transition-colors">' + cleanText + '</span>'
+          + '<span class="text-amber-400 font-mono text-xs opacity-80 group-hover:opacity-100">結末へ -&gt;</span>';
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          var flags = state.userFlags || [];
+          var objFlags = state.flags || {};
+          var slots = state.slots || {};
+          var hasA = flags.indexOf("PIECE_A") !== -1 || objFlags["PIECE_A"] || (slots["A_1030"] === "A_TAKE_PLATE");
+          var hasB = flags.indexOf("PIECE_B") !== -1 || objFlags["PIECE_B"] || (slots["B_1030_ITEM"] === "B_TAKE_PLATE");
+          var hasC = flags.indexOf("PIECE_C") !== -1 || objFlags["PIECE_C"] || (slots["C_1030_ITEM"] === "C_TAKE_BOX");
+          if (hasA && hasB && hasC) {
+            launchNode("CLIMAX_EPILOGUE_C");
+          } else {
+            launchNode("NORMAL_CLEAR");
+          }
+        };
+        wrapper.appendChild(btn);
+        return;
+      }
+
+      // 2. checkTripleSync
+      if (ch.checkTripleSync) {
+        var btn = document.createElement("button");
+        btn.className = "w-full text-left p-3.5 bg-emerald-900/40 hover:bg-emerald-800/60 border border-emerald-500 rounded-xl text-xs sm:text-sm font-bold text-emerald-100 transition-all flex items-center justify-between group shadow-lg";
+        btn.innerHTML = '<span class="group-hover:text-emerald-300 transition-colors">' + cleanText + '</span>'
+          + '<span class="text-emerald-400 font-mono text-xs opacity-80 group-hover:opacity-100">同期確認 -&gt;</span>';
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          if (ch.slot) {
+            state.slots[ch.slot] = ch.flagValue || true;
+          }
+          if (ch.setFlags) {
+            ch.setFlags.forEach(function(f) {
+              if (state.userFlags.indexOf(f) === -1) state.userFlags.push(f);
+              state.slots[f] = true;
+            });
+            TimelineState.rebuildFlags();
+          }
+          var flags = state.userFlags || [];
+          var isA = flags.indexOf("A_FREEDOM_DONE") !== -1;
+          var isB = flags.indexOf("B_EQUALITY_DONE") !== -1;
+          var isC = flags.indexOf("C_SOCIAL_DONE") !== -1;
+          if (isA && isB && isC) {
+            AudioEngine.play('fanfare');
+            var isTawakichi = (state.slots["A_1150"] === "A_CALL_VOICE" &&
+                               state.slots["B_1150"] === "B_CALL_VOICE" &&
+                               state.slots["C_1150"] === "C_CALL_VOICE");
+            if (isTawakichi) {
+              UIController.showToast("【★ 隠しボーナス解放 ★】\n全員の力技突破が奇跡のバグを引き起こした……！？");
+              launchNode("BONUS_TAWAKICHI");
+            } else {
+              UIController.showToast("【12:00 最終決戦突入】\n三者が中央統治タワー最上階へ集結した！");
+              if (!state.hour2PreviewSeen && typeof UIController !== "undefined" && UIController.showHour2Preview) {
+                UIController.showHour2Preview();
+              } else {
+                launchNode("CLIMAX_HUB");
+              }
+            }
+          } else {
+            launchNode("KEEP_OUT_HOUR2_SYNC");
+          }
+        };
+        wrapper.appendChild(btn);
+        return;
+      }
+
+      // 3. checkJump (KEEP OUT / Multi-branch / Cross-character trigger)
+      if (ch.checkJump) {
+        var btn = document.createElement("button");
+        btn.className = "w-full text-left p-3.5 bg-neutral-900 hover:bg-neutral-850 border border-neutral-750 hover:border-amber-500 rounded-xl text-xs sm:text-sm font-bold text-neutral-100 transition-all flex items-center justify-between group shadow-lg";
+        btn.innerHTML = '<span class="group-hover:text-amber-300 transition-colors">' + cleanText + '</span>'
+          + '<span class="text-amber-400 font-mono text-xs opacity-80 group-hover:opacity-100">調べる -&gt;</span>';
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          if (ch.slot) {
+            state.slots[ch.slot] = ch.flagValue || true;
+          }
+          if (ch.setFlags && Array.isArray(ch.setFlags)) {
+            ch.setFlags.forEach(function(f) {
+              if (state.userFlags.indexOf(f) === -1) state.userFlags.push(f);
+              state.slots[f] = true;
+            });
+          }
+          TimelineState.rebuildFlags();
+          if (ch.slot && TimelineState.applyCrossCharacterCausality) {
+            TimelineState.applyCrossCharacterCausality(ch.slot, ch.flagValue);
+          }
+
+          var cj = ch.checkJump;
+          var actualVal = state.slots[cj.slotKey];
+
+          // A. Multi-branch support
+          if (cj.branches && Array.isArray(cj.branches)) {
+            var matched = false;
+            for (var bi = 0; bi < cj.branches.length; bi++) {
+              var br = cj.branches[bi];
+              if (actualVal === br.value) {
+                matched = true;
+                launchNode(br.next);
+                break;
+              }
+            }
+            if (!matched) {
+              var defNext = cj.defaultNext || cj.onBlock || cj.onPass;
+              launchNode(defNext);
+            }
+            return;
+          }
+
+          // B. Legacy single expected condition
+          if (actualVal === cj.expected) {
+            launchNode(cj.onPass);
+          } else {
+            launchNode(cj.onBlock);
+          }
+        };
+        wrapper.appendChild(btn);
+        return;
+      }
+
+      // 4. lockCondition check
+      var isLocked = false;
+      if (ch.lockCondition && state.userFlags.indexOf(ch.lockCondition) === -1) {
+        isLocked = true;
+      }
+
+      var btn = document.createElement("button");
+      if (isLocked) {
+        var cleanLockedText = (ch.lockedText || "🔒 封印").replace(/^【.*?】\s*/, '');
+        btn.className = "w-full text-left p-3.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs sm:text-sm font-bold text-neutral-500 cursor-not-allowed flex items-center justify-between shadow opacity-60";
+        btn.innerHTML = '<span>' + cleanLockedText + '</span><span class="text-neutral-600 text-xs">🔒 封印</span>';
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('badend');
+          UIController.showToast("この選択肢は歴史の改変により解禁されます。他のタイムラインを探索してください。");
+        };
+      } else {
+        var isNewUnlocked = ch.lockCondition && state.userFlags.indexOf(ch.lockCondition) !== -1;
+        btn.className = "w-full text-left p-3.5 bg-neutral-900 hover:bg-neutral-850 active:scale-[0.99] border " + (isNewUnlocked ? "border-amber-400 shadow-amber-500/20" : "border-neutral-750 hover:border-amber-500") + " rounded-xl text-xs sm:text-sm font-bold text-neutral-100 transition-all flex items-center justify-between group shadow-lg";
+        btn.innerHTML = '<span class="group-hover:text-amber-300 transition-colors">' + (isNewUnlocked ? '<span class="text-amber-400 font-black mr-1.5">🌟 NEW!</span>' : '') + cleanText + '</span>'
+          + '<span class="text-amber-400 font-mono text-xs opacity-80 group-hover:opacity-100">選択 -&gt;</span>';
+
+        btn.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          if (ch.action === "restartGame") {
+            // セーブデータ（hasClearedOnce, unlockedEndings, unlockedTips）は保持したまま、
+            // プレイ中のタイムライン進行（slots, currentNodeKey）を初期状態へ戻して再スタート
+            state.currentChar = "A";
+            state.currentNodeKey = "A_1000";
+            state.slots = {};
+            state.userFlags = [];
+            state.visitedNodes = ["A_1000"];
+            TimelineState.rebuildFlags();
+            TimelineState.saveLocal();
+            UIController.showToast("新たな探究の旅が始まります。注意深く歴史の痕跡を探してください。");
+            launchNode("A_1000");
+            return;
+          }
+          if (ch.unlockTrophy) {
+            TimelineState.unlockTrophy(ch.unlockTrophy);
+          }
+          if (node.id === "SIDE_AUGUST" || ch.unlockTrophy === "augustMaster") {
+            TimelineState.markTipMastered("オーガスト卿");
+          }
+          if (ch.action === "openCertificate") {
+            AudioEngine.play('fanfare');
+            if (typeof CertRenderer !== "undefined" && CertRenderer.openModal) {
+              CertRenderer.openModal();
+            }
+            return;
+          }
+          if (ch.action === "returnChart") {
+            UIController.openChart();
+            return;
+          }
+          if (ch.action === "returnTitle") {
+            UIController.switchView('auth');
+            UIController.renderTimeBlockStatus();
+            return;
+          }
+          if (ch.fx === "tadaima_silence") {
+            var overlay = document.getElementById("vfxOverlay");
+            if (overlay) {
+              overlay.className = "absolute inset-0 pointer-events-none z-50 bg-black opacity-100 transition-opacity duration-300";
+            }
+            setTimeout(function() {
+              if (overlay) {
+                overlay.className = "absolute inset-0 pointer-events-none z-50 bg-transparent transition-opacity duration-500";
+              }
+              var nxt = (typeof ch.next === "function") ? ch.next(state) : ch.next;
+              if (nxt) launchNode(nxt);
+            }, 800);
+            return;
+          }
+          if (ch.fx === "flash") UIController.flashScreen();
+          if (ch.fx === "shake") UIController.shakeScreen();
+
+          if (ch.slot) {
+            state.slots[ch.slot] = ch.flagValue || true;
+            state.causalityModified = true;
+          }
+          if (ch.setFlags && Array.isArray(ch.setFlags)) {
+            ch.setFlags.forEach(function(f) {
+              if (state.userFlags.indexOf(f) === -1) state.userFlags.push(f);
+              state.slots[f] = true;
+            });
+            state.causalityModified = true;
+          }
+          TimelineState.rebuildFlags();
+          if (ch.slot && TimelineState.applyCrossCharacterCausality) {
+            TimelineState.applyCrossCharacterCausality(ch.slot, ch.flagValue);
+          }
+
+          // 因果波及の特殊演出
+          if (ch.slot === "BONUS_TAWAKICHI_CLEARED" || node.id === "BONUS_TAWAKICHI") {
+            if (typeof SoundtrackGallery !== "undefined" && SoundtrackGallery.checkUnlockStatus) {
+              SoundtrackGallery.checkUnlockStatus();
+            }
+            UIController.showToast("🐱【特典解放】タワ吉の大掃除により、メニューに『旋律図鑑（サウンドトラック）』が解放されました！");
+          } else if (ch.slot === "C_DRAW_PEN" || (ch.setFlags && ch.setFlags.indexOf("FLAG_DANIEL_DRAW_PEN") !== -1)) {
+            AudioEngine.play('pen_sketch');
+            UIController.showCausalityShift("因果波及：シンの万年筆によるスケッチが完成！ レン（自由権）の時間軸へ合図が届きます。", "BUTTERFLY EFFECT // 因果波及");
+            state.causalityModified = false;
+          } else if (ch.slot === "B_VALVE_OPEN") {
+            UIController.showCausalityShift("因果波及：下層水門が開放された！ レン（自由権）の時間軸へ影響が波及します。", "BUTTERFLY EFFECT // 因果波及");
+            state.causalityModified = false;
+          }
+
+          var nextNodeId = (typeof ch.next === "function") ? ch.next(state) : ch.next;
+          if (nextNodeId) {
+            launchNode(nextNodeId);
+          }
+        };
+      }
+      wrapper.appendChild(btn);
+    });
+    var tapZone = document.getElementById("novelTapZone");
+    if (tapZone) {
+      setTimeout(function() { tapZone.scrollTop = tapZone.scrollHeight; }, 60);
+    }
+  }
+
+  function triggerBadEnd(badEndId) {
+    var state = TimelineState.getState();
+    var node = MASTER_DB.nodes[badEndId];
+    if (!node) return;
+
+    // 428 バタフライエフェクト：BAD ENDに遭遇したキャラクターの次回再開位置を「直前の選択肢ノード」に確実にセット
+    var prevBadNode = BAD_END_PREVIOUS_NODES[badEndId];
+    if (prevBadNode && node.char && node.char !== "ALL") {
+      if (!state.lastCharNodes) state.lastCharNodes = { A: "A_1000", B: "B_1000", C: "C_1000" };
+      state.lastCharNodes[node.char] = prevBadNode;
+    }
+
+    if (node.unlockFlag) {
+      if (state.userFlags.indexOf(node.unlockFlag) === -1) {
+        state.userFlags.push(node.unlockFlag);
+      }
+      state.slots[node.unlockFlag] = true;
+      TimelineState.rebuildFlags();
+    }
+
+    state.unlockedEndings[badEndId] = true;
+    if (!state.badEndWitnesses) state.badEndWitnesses = {};
+    if (!state.badEndWitnesses[badEndId]) state.badEndWitnesses[badEndId] = {};
+    var charKey = state.currentChar || (node.char && node.char !== "ALL" ? node.char : "A");
+    state.badEndWitnesses[badEndId][charKey] = true;
+    TimelineState.saveLocal();
+
+    // 【旋律柱】BAD END暗転突入時、BGMを滑らかにフェードアウト停止
+    if (typeof AudioEngine !== "undefined" && AudioEngine.stopBGM) {
+      AudioEngine.stopBGM(0.4);
+    }
+
+    // 【428 映画的シネマティック暗転トランジション】
+    var overlay = document.getElementById("vfxOverlay");
+    if (overlay) {
+      // フェーズ1：画面全体が漆黒へ滑らかにフェードアウト（0.5秒）
+      overlay.className = "absolute inset-0 pointer-events-none z-50 bg-black opacity-100 transition-opacity duration-500";
+    }
+
+    // フェーズ2：暗黒の静寂（0.5秒後に裏でDOM切り替え）
+    setTimeout(function() {
+      UIController.switchView('badend');
+
+      var badTitle = typeof node.title === "function" ? node.title(state) : (node.title || "BAD END");
+      var badDesc = typeof node.desc === "function" ? node.desc(state) : (node.desc || "");
+      var badHint = typeof node.hint === "function" ? node.hint(state) : (node.hint || "別の選択肢を試せ。");
+      var badTarget = typeof node.jumpTarget === "function" ? node.jumpTarget(state) : (node.jumpTarget || "A_1000");
+
+      document.getElementById("badEndTimeBadge").textContent = node.time || "CHRONICLE";
+      document.getElementById("badEndCharBadge").textContent = "[" + (node.charName || badTitle) + "]";
+      document.getElementById("badEndTitle").textContent = badTitle;
+
+      var paraContainer = document.getElementById("badEndParagraphs");
+      paraContainer.innerHTML = '<p class="leading-relaxed">' + badDesc + '</p>';
+
+      var isClimaxBad = (["BAD_06", "BAD_07", "BAD_08", "BAD_09", "BAD_24", "BAD_25", "BAD_26"].indexOf(badEndId) !== -1);
+      if (isClimaxBad) {
+        var witnesses = (state.badEndWitnesses && state.badEndWitnesses[badEndId]) ? state.badEndWitnesses[badEndId] : {};
+        var currentC = state.currentChar || (node.char && node.char !== "ALL" ? node.char : "A");
+        var rOn = witnesses["A"] || witnesses["R"] || currentC === "A";
+        var eOn = witnesses["B"] || witnesses["E"] || currentC === "B";
+        var dOn = witnesses["C"] || witnesses["D"] || currentC === "C";
+        var isAllOn = rOn && eOn && dOn;
+
+        var redBanner = '<div class="mt-4 p-2.5 rounded-xl bg-neutral-950/90 border ' + (isAllOn ? 'border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]' : 'border-neutral-800') + ' flex items-center justify-between text-xs">' +
+          '<div class="flex items-center gap-2">' +
+            '<span class="font-mono text-[10px] ' + (isAllOn ? 'text-rose-400 font-bold' : 'text-neutral-400') + '">RED 3者視点観測:</span>' +
+            '<span class="px-2 py-0.5 rounded font-mono font-black text-xs ' + (rOn ? (isAllOn ? 'bg-rose-600 text-white shadow-[0_0_8px_#f43f5e]' : 'bg-emerald-950 text-emerald-300 border border-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]') : 'text-neutral-600 bg-neutral-900 border border-neutral-800') + '">R (レン)</span>' +
+            '<span class="px-2 py-0.5 rounded font-mono font-black text-xs ' + (eOn ? (isAllOn ? 'bg-rose-600 text-white shadow-[0_0_8px_#f43f5e]' : 'bg-sky-950 text-sky-300 border border-sky-500 shadow-[0_0_6px_rgba(14,165,233,0.5)]') : 'text-neutral-600 bg-neutral-900 border border-neutral-800') + '">E (エレナ)</span>' +
+            '<span class="px-2 py-0.5 rounded font-mono font-black text-xs ' + (dOn ? (isAllOn ? 'bg-rose-600 text-white shadow-[0_0_8px_#f43f5e]' : 'bg-amber-950 text-amber-300 border border-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.5)]') : 'text-neutral-600 bg-neutral-900 border border-neutral-800') + '">D (ダニエル)</span>' +
+          '</div>' +
+          '<span class="text-[10px] font-mono ' + (isAllOn ? 'text-rose-400 font-bold' : 'text-purple-300') + '">' +
+            (isAllOn ? '★ RED全視点踏破完了！' : '※他視点でもこの結末を追究せよ') +
+          '</span>' +
+        '</div>';
+        paraContainer.innerHTML += redBanner;
+      }
+
+      var lessonEl = document.getElementById("badEndLesson");
+      if (lessonEl) {
+        lessonEl.textContent = badHint;
+      }
+
+      var jumpLabel = document.getElementById("badEndJumpLabel");
+      if (jumpLabel) {
+        if (badEndId === "BAD_10") {
+          jumpLabel.textContent = "司令室へ戻り【ダニエル】を解放する ▶";
+        } else {
+          jumpLabel.textContent = "原因となった時間軸へ JUMP ▶";
+        }
+      }
+
+      var jumpBtn = document.getElementById("btnBadEndJump");
+      if (badEndId === "BAD_10") {
+        jumpBtn.onclick = function() {
+          AudioEngine.play('jump');
+          UIController.switchView('auth');
+          if (typeof displayCharSelect === "function") {
+            displayCharSelect();
+          }
+        };
+      } else {
+        jumpBtn.onclick = function() {
+          AudioEngine.play('jump');
+          launchNode(badTarget, { isJump: true, type: "badend" });
+        };
+      }
+
+      TimelineState.syncServer(badTitle);
+
+      // フェーズ3：重低音SE・画面激震・クリムゾンフラッシュでBAD END画面カットイン
+      setTimeout(function() {
+        AudioEngine.play('badend');
+        UIController.shakeScreen();
+        if (overlay) {
+          overlay.className = "absolute inset-0 pointer-events-none z-50 bg-red-600/40 transition-none";
+          setTimeout(function() {
+            overlay.className = "absolute inset-0 pointer-events-none z-50 bg-transparent transition-colors duration-500";
+          }, 120);
+        }
+      }, 150);
+    }, 500);
+  }
+
+  function showKeepOut(koNode) {
+    AudioEngine.play('badend');
+    UIController.switchView('keepout');
+
+    var state = TimelineState.getState();
+
+    // 428 バタフライエフェクト：KEEP OUT遭遇時も直前の選択肢ノードを再開位置として確保
+    var prevKoNode = KEEP_OUT_PREVIOUS_NODES[koNode.id];
+    if (prevKoNode && koNode.char && koNode.char !== "ALL") {
+      if (!state.lastCharNodes) state.lastCharNodes = { A: "A_1000", B: "B_1000", C: "C_1000" };
+      state.lastCharNodes[koNode.char] = prevKoNode;
+    }
+
+    document.getElementById("keepOutReason").textContent = koNode.desc || koNode.reason || "これ以上先へ進めない！";
+    document.getElementById("keepOutHint").textContent = koNode.jumpHint || koNode.hint || "他の時間軸を調査せよ。";
+
+    var syncGateBox = document.getElementById("syncGateStatusBox");
+    if (koNode.isSyncGate) {
+      if (syncGateBox) syncGateBox.classList.remove("hidden");
+      var state = TimelineState.getState();
+      var flags = state.userFlags || [];
+
+      var isA = flags.indexOf("A_FREEDOM_DONE") !== -1;
+      var isB = flags.indexOf("B_EQUALITY_DONE") !== -1;
+      var isC = flags.indexOf("C_SOCIAL_DONE") !== -1;
+
+      var syncBoxA = document.getElementById("syncStatusA");
+      var syncTextA = document.getElementById("syncTextA");
+      if (syncBoxA && syncTextA) {
+        syncBoxA.className = "p-2.5 rounded-xl border transition-all " + (isA ? "bg-emerald-950/90 border-emerald-400 text-emerald-300 font-bold shadow-lg shadow-emerald-950/50" : "bg-neutral-900/90 border-emerald-500/40 hover:border-emerald-400 text-emerald-400 hover:bg-emerald-950/40 cursor-pointer group shadow");
+        syncTextA.innerHTML = isA ? '<span class="flex items-center justify-between text-xs"><span>レン (東管制室)</span><span class="inline-flex items-center gap-1 text-[11px] text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>到達済・待機中 ✓</span></span>' : '<span class="flex items-center justify-between text-xs"><span>レン (東管制室)</span><span class="inline-flex items-center gap-1 text-[11px] text-amber-300 animate-pulse font-mono font-bold"><span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>未到達 (JUMP ▶)</span></span>';
+        syncBoxA.onclick = !isA ? function() { AudioEngine.play('jump'); launchNode(TimelineState.getState().lastCharNodes.A || "A_1000"); } : null;
+      }
+
+      var syncBoxB = document.getElementById("syncStatusB");
+      var syncTextB = document.getElementById("syncTextB");
+      if (syncBoxB && syncTextB) {
+        syncBoxB.className = "p-2.5 rounded-xl border transition-all " + (isB ? "bg-sky-950/90 border-sky-400 text-sky-300 font-bold shadow-lg shadow-sky-950/50" : "bg-neutral-900/90 border-sky-500/40 hover:border-sky-400 text-sky-400 hover:bg-sky-950/40 cursor-pointer group shadow");
+        syncTextB.innerHTML = isB ? '<span class="flex items-center justify-between text-xs"><span>エレナ (西管制室)</span><span class="inline-flex items-center gap-1 text-[11px] text-sky-300"><span class="w-2 h-2 rounded-full bg-sky-400"></span>到達済・待機中 ✓</span></span>' : '<span class="flex items-center justify-between text-xs"><span>エレナ (西管制室)</span><span class="inline-flex items-center gap-1 text-[11px] text-amber-300 animate-pulse font-mono font-bold"><span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>未到達 (JUMP ▶)</span></span>';
+        syncBoxB.onclick = !isB ? function() { AudioEngine.play('jump'); launchNode(TimelineState.getState().lastCharNodes.B || "B_1000"); } : null;
+      }
+
+      var syncBoxC = document.getElementById("syncStatusC");
+      var syncTextC = document.getElementById("syncTextC");
+      if (syncBoxC && syncTextC) {
+        syncBoxC.className = "p-2.5 rounded-xl border transition-all " + (isC ? "bg-amber-950/90 border-amber-400 text-amber-300 font-bold shadow-lg shadow-amber-950/50" : "bg-neutral-900/90 border-amber-500/40 hover:border-amber-400 text-amber-400 hover:bg-amber-950/40 cursor-pointer group shadow");
+        syncTextC.innerHTML = isC ? '<span class="flex items-center justify-between text-xs"><span>ダニエル (南管制室)</span><span class="inline-flex items-center gap-1 text-[11px] text-amber-300"><span class="w-2 h-2 rounded-full bg-amber-400"></span>到達済・待機中 ✓</span></span>' : '<span class="flex items-center justify-between text-xs"><span>ダニエル (南管制室)</span><span class="inline-flex items-center gap-1 text-[11px] text-amber-300 animate-pulse font-mono font-bold"><span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>未到達 (JUMP ▶)</span></span>';
+        syncBoxC.onclick = !isC ? function() { AudioEngine.play('jump'); launchNode(TimelineState.getState().lastCharNodes.C || "C_1000"); } : null;
+      }
+    } else {
+      if (syncGateBox) syncGateBox.classList.add("hidden");
+    }
+
+    var jumpLabel = document.getElementById("keepOutJumpLabel");
+    if (jumpLabel) {
+      if (koNode.id === "KEEP_OUT_A1") {
+        jumpLabel.textContent = "司令室へ戻り【令嬢エレナ】を解放する ▶";
+      } else if (koNode.isSyncGate || koNode.jumpTarget === "TIMELINE") {
+        jumpLabel.textContent = "タイムラインへ JUMP ▶";
+      } else {
+        jumpLabel.textContent = (koNode.jumpCharName ? (koNode.jumpCharName + " へ JUMP ▶") : "該当主人公へ JUMP ▶");
+      }
+    }
+
+    var jumpBtn = document.getElementById("btnKeepOutJump");
+    jumpBtn.onclick = function() {
+      AudioEngine.play('jump');
+      if (koNode.id === "KEEP_OUT_A1") {
+        // レンのKeepOutからスタート画面に戻ってロック解除アニメーションへ
+        UIController.switchView('auth');
+        if (typeof displayCharSelect === "function") {
+          displayCharSelect();
+        }
+        return;
+      }
+      if (koNode.jumpTarget === "TIMELINE" || !koNode.jumpTarget) {
+        UIController.switchView('auth');
+        UIController.renderTimeBlockStatus();
+      } else {
+        launchNode(koNode.jumpTarget || "A_1000", { isJump: true, type: "keepout" });
+      }
+    };
+
+    TimelineState.syncServer(koNode.title);
+  }
+
+  function triggerGoodEnd(node) {
+    AudioEngine.play('fanfare');
+    TimelineState.markCleared(node.id);
+    TimelineState.unlockTrophy('normalClear');
+
+    UIController.switchView('novel');
+    currentParagraphs = node.paragraphs || [];
+    currentParagraphIndex = 0;
+
+    var list = document.getElementById("paragraphsList");
+    list.innerHTML = "";
+    document.getElementById("choicesWrapper").classList.add("hidden");
+    document.getElementById("choicesWrapper").innerHTML = "";
+
+    showNextParagraph();
+    UIController.checkAllClearBadge();
+    TimelineState.syncServer(node.title);
+  }
+
+  function startTrueEndSequence() {
+    AudioEngine.play('fanfare');
+    TimelineState.markCleared("TRUE_SECRET_END");
+    TimelineState.unlockTrophy('trueEnd');
+    trueEndStep = 0;
+
+    UIController.switchView('trueend');
+
+    document.getElementById("trueEndDramaContainer").classList.add("hidden");
+    document.getElementById("btnCertFromTrue").classList.add("hidden");
+    document.getElementById("btnProceedTrueEnd").classList.remove("hidden");
+    document.getElementById("btnProceedTrueEnd").textContent = "解析を開始する ->";
+    document.getElementById("scanStatusText").textContent =
+      "システム音声：『光学スキャナ上に3つの遺物を確認。表面文字OCRおよび深層暗号ICチップの解析を開始します……』";
+  }
+
+  function advanceTrueEnd() {
+    trueEndStep++;
+    AudioEngine.play('scan');
+
+    var statusText = document.getElementById("scanStatusText");
+    var btnNext = document.getElementById("btnProceedTrueEnd");
+
+    if (trueEndStep === 1) {
+      document.getElementById("decodeTextA").textContent = "『千代田区隼町・最高裁判所』";
+      document.getElementById("decodeTextA").className = "font-black text-xs sm:text-sm text-emerald-400 tracking-wider";
+      statusText.textContent = "『【標本A解析完了】表面刻印：旧・日本国首都「東京都千代田区隼町 / 最高裁判所」の道路標識。深層暗号ICチップを検知……解凍完了：【自由権・個人の尊重】条文データをシステムへインストール！』";
+      btnNext.textContent = "次の遺物を解析 ->";
+    } else if (trueEndStep === 2) {
+      document.getElementById("decodeTextB").textContent = "『千代田区永田町・国会議事堂』";
+      document.getElementById("decodeTextB").className = "font-black text-xs sm:text-sm text-sky-400 tracking-wider";
+      statusText.textContent = "『【標本B解析完了】表面刻印：旧国家最高機関「東京都千代田区永田町 / 国会議事堂 法典保管室」の真鍮銘板。深層暗号ICチップを検知……解凍完了：【平等権・法の下の平等】条文データをシステムへインストール！』";
+      btnNext.textContent = "次の遺物を解析 ->";
+    } else if (trueEndStep === 3) {
+      document.getElementById("decodeTextC").textContent = "『千代田区霞が関・厚生労働省』";
+      document.getElementById("decodeTextC").className = "font-black text-xs sm:text-sm text-amber-400 tracking-wider";
+      statusText.textContent = "『【標本C解析完了】表面刻印：旧・日本国政府「東京都千代田区霞が関 / 厚生労働省 災害備蓄用」の公的刻印。深層暗号ICチップを検知……解凍完了：【社会権・生存権の保障】条文データをシステムへインストール！』";
+      btnNext.textContent = "立憲再起動プロトコルを実行 ->";
+    } else if (trueEndStep === 4) {
+      AudioEngine.play('chime');
+      statusText.innerHTML = "システム音声：『3つの深層ICチップ照合完了。自由権・平等権・社会権の相互信託を確認。……2040年立憲フェイルセーフ・時限ホログラムを展開します』<br><br><span class='text-amber-300 font-bold'>【2040年ホログラム記録】</span><br>『私たちは2040年を生きる者だ。AIが高度に発達し、思考を放棄した人類はこの先どうなってしまうのか……。効率の名のもとに人権さえ失われる未来を防ぐため、この防衛コードを遺す。未来の仲間たちよ、自らの手で未来を選ぶ権利——「主権」を取り戻しなさい！』";
+
+      // ユーザーUI/UX指摘対応：スキャン解析後は、通常のサウンドノベル画面（viewNovel）に復帰！
+      // 大きく読みやすいフォント・タップ送りで感動のエピローグ全幕をじっくりと堪能させる
+      btnNext.textContent = "真実の歴史を展開する（通常テキストで読む） ▶";
+      btnNext.className = "flex-1 py-4 bg-gradient-to-r from-emerald-400 via-sky-400 to-amber-400 hover:from-emerald-300 hover:to-amber-300 text-neutral-950 font-black rounded-xl text-sm sm:text-base shadow-[0_0_30px_rgba(56,189,248,0.5)] active:scale-[0.99] transition-all cursor-pointer";
+    } else if (trueEndStep >= 5) {
+      AudioEngine.play('fanfare');
+      var state = TimelineState.getState();
+      state.trueEndScanned = true;
+      TimelineState.saveLocal();
+
+      // 通常ノベルビューへ遷移し、TRUE_SECRET_ENDの全幕を大画面で再生
+      launchNode("TRUE_SECRET_END");
+    }
+  }
+
+  function switchChar(charId) {
+    var state = TimelineState.getState();
+    var prog = TimelineState.getHourProgress();
+
+    if (charId === "B") {
+      var isUnlockedB = state.visitedNodes.indexOf("A_1045_WATERGATE") !== -1 || state.visitedNodes.indexOf("A_1100") !== -1 || state.visitedNodes.indexOf("B_1000") !== -1 || (state.lastCharNodes && state.lastCharNodes.B) || state.slots["B_1000"] || (prog.hour1 && prog.hour1.B);
+      if (!isUnlockedB) {
+        AudioEngine.play('badend');
+        UIController.showToast("電磁ロックに遮られている……。レン編のタイムラインを進め、因果を動かせ。");
+        return;
+      }
+    }
+    if (charId === "C") {
+      var isUnlockedC = state.unlockedEndings["BAD_10"] || state.visitedNodes.indexOf("BAD_10") !== -1 || state.slots["C_1000"] === "C_HEAL" || state.visitedNodes.indexOf("C_1000") !== -1 || (state.lastCharNodes && state.lastCharNodes.C) || state.slots["B_1030"] || (prog.hour1 && prog.hour1.C);
+      if (!isUnlockedC) {
+        AudioEngine.play('badend');
+        UIController.showToast("地下隔壁が硬く閉ざされている……。エレナ編で密告通報の悲劇（BAD_10）を観測し、運命を解放せよ。");
+        return;
+      }
+    }
+
+    AudioEngine.play('tap');
+    state.currentChar = charId;
+    UIController.updateHeaderTabs();
+
+    // 428 アワーごとの適切なスタートノード決定（クライマックス保護）
+    if (prog.hour2.allClear) {
+      if (!state.lastCharNodes) state.lastCharNodes = {};
+      var lastNode = state.lastCharNodes[charId];
+      var lastIsClimax = lastNode && (lastNode.startsWith("CLIMAX_") || lastNode.includes("EVAL_") || lastNode.startsWith("BAD_REN_") || lastNode.startsWith("BAD_ELENA_") || lastNode.startsWith("BAD_DANIEL_") || ["BAD_06","BAD_07","BAD_08","BAD_09","BAD_24","BAD_25","BAD_26"].indexOf(lastNode) !== -1);
+      if (!lastIsClimax) {
+        var hour3Starts = { A: "CLIMAX_REN_START", B: "CLIMAX_ELENA_START", C: "CLIMAX_DANIEL_START" };
+        state.lastCharNodes[charId] = hour3Starts[charId];
+      }
+    }
+
+    // 以前の到達ノードがあればその位置へ正確に復帰
+    if (state.lastCharNodes && state.lastCharNodes[charId]) {
+      var targetNodeId = state.lastCharNodes[charId];
+      // 428 バタフライエフェクト：もし前回の停止位置が BAD END または KEEP OUT だった場合、
+      // 過去改変後の再挑戦のため「直前の選択肢ノード」へ安全に巻き戻して復帰！
+      if (BAD_END_PREVIOUS_NODES[targetNodeId]) {
+        targetNodeId = BAD_END_PREVIOUS_NODES[targetNodeId];
+        state.lastCharNodes[charId] = targetNodeId;
+      } else if (KEEP_OUT_PREVIOUS_NODES[targetNodeId]) {
+        targetNodeId = KEEP_OUT_PREVIOUS_NODES[targetNodeId];
+        state.lastCharNodes[charId] = targetNodeId;
+      }
+      launchNode(targetNodeId);
+      return;
+    }
+
+    // 428 アワーごとの適切なスタートノード決定（フォールバック）
+    if (prog.hour2.allClear) {
+      var hour3Starts = { A: "CLIMAX_REN_START", B: "CLIMAX_ELENA_START", C: "CLIMAX_DANIEL_START" };
+      launchNode(hour3Starts[charId] || "CLIMAX_REN_START");
+    } else if (prog.hour1.allClear) {
+      var hour2Starts = { A: "A_1100", B: "B_1100", C: "C_1100" };
+      launchNode(hour2Starts[charId] || "A_1100");
+    } else {
+      var startNodes = { A: "A_1000", B: "B_1000", C: "C_1000" };
+      launchNode(startNodes[charId] || "A_1000");
+    }
+  }
+
+  function skipToChoices() {
+    AudioEngine.play('jump');
+    var list = document.getElementById("paragraphsList");
+    if (!list) return;
+    list.innerHTML = "";
+    var state = TimelineState.getState();
+    for (var i = 0; i < currentParagraphs.length; i++) {
+      var pItem = currentParagraphs[i];
+      var pText = (typeof pItem === 'function') ? pItem(state) : pItem;
+      if (pText && typeof pText === 'string' && pText.trim().length > 0) {
+        var pEl = document.createElement("p");
+        pEl.className = "para-in leading-relaxed";
+        pEl.innerHTML = pText;
+        list.appendChild(pEl);
+      }
+    }
+
+    // 全TIPSリンクのスタイル適用（未読:青 / 既読:黄 / クイズ正解:ピンク / オーガスト真エンド:赤）
+    if (typeof UIController !== "undefined" && UIController.applyTipLinkStyles) {
+      UIController.applyTipLinkStyles(list);
+    }
+    currentParagraphIndex = currentParagraphs.length;
+    var prompt = document.getElementById("promptNext");
+    if (prompt) prompt.classList.add("hidden");
+    var btnSkip = document.getElementById("btnSkipNovel");
+    if (btnSkip) btnSkip.classList.add("hidden");
+    renderChoices();
+    var tapZone = document.getElementById("novelTapZone");
+    if (tapZone) tapZone.scrollTop = tapZone.scrollHeight;
+  }
+
+  return {
+    launchNode: launchNode,
+    showNextParagraph: showNextParagraph,
+    skipToChoices: skipToChoices,
+    switchChar: switchChar,
+    advanceTrueEnd: advanceTrueEnd
+  };
+})();
+
+// DOMContentLoaded & 各種イベントリスナー登録
+document.addEventListener("DOMContentLoaded", function() {
+  TimelineState.loadLocal();
+  UIController.renderTimeBlockStatus();
+  UIController.checkAllClearBadge();
+
+  // 12:00 最終決戦予告編ボタン（タイトル画面）
+  var btnClimaxPreview = document.getElementById("btnOpenClimaxPreviewFromTitle");
+  if (btnClimaxPreview) {
+    btnClimaxPreview.addEventListener("click", function(e) {
+      e.stopPropagation();
+      UIController.showHour2Preview();
+    });
+  }
+
+  // キャラクターローンチボタン (A, B, C, CLIMAX)
+  var launchBtns = document.querySelectorAll(".char-launch-btn");
+  launchBtns.forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      var targetChar = btn.getAttribute("data-launch");
+      var state = TimelineState.getState();
+      var prog = TimelineState.getHourProgress();
+      var flags = state.userFlags || [];
+
+      if (targetChar === "SIDE_AUGUST") {
+        AudioEngine.play('jump');
+        GameEngine.launchNode("SIDE_AUGUST");
+        return;
+      }
+
+      if (targetChar === "CLIMAX") {
+        AudioEngine.play('fanfare');
+        var renPressed = flags.indexOf("FLAG_REN_PRESSED") !== -1;
+        var elenaPressed = flags.indexOf("FLAG_ELENA_PRESSED") !== -1;
+        var danielPressed = flags.indexOf("FLAG_DANIEL_PRESSED") !== -1;
+        if (renPressed && elenaPressed && danielPressed) {
+          GameEngine.launchNode("CLIMAX_CONVERGE_HUB");
+        } else if (!renPressed && !elenaPressed && !danielPressed) {
+          // 全員がまだ12:10の操作を行っていない初回突入時は、12:00三者合流ハブへ直接突入！
+          GameEngine.launchNode("CLIMAX_HUB");
+        } else {
+          var msg = "【12:15 三者合流スキャン】\n";
+          if (!renPressed) msg += "・レンの南翼キー操作が未同調\n";
+          if (!elenaPressed) msg += "・エレナの西翼キー操作が未同調\n";
+          if (!danielPressed) msg += "・ダニエルの東翼キー操作が未同調\n";
+          msg += "各主人公の12:00決戦を進め、12:10のキー操作を同期させよ！";
+          UIController.showToast(msg);
+          if (!renPressed) GameEngine.switchChar("A");
+          else if (!elenaPressed) GameEngine.switchChar("B");
+          else if (!danielPressed) GameEngine.switchChar("C");
+        }
+        return;
+      }
+
+      // 待機中主人公の自由な選択肢モーダル（ブロックの撤廃）
+      var isWaitingH1 = (!prog.hour1.allClear && prog.hour1[targetChar]);
+      var isWaitingH2 = (prog.hour1.allClear && !prog.hour2.allClear && prog.hour2[targetChar]);
+      if (isWaitingH1 || isWaitingH2) {
+        AudioEngine.play('tap');
+        UIController.showCharWaitOption(targetChar, isWaitingH1 ? 1 : 2);
+        return;
+      }
+
+      GameEngine.switchChar(targetChar);
+    });
+  });
+
+  // ロックカードタップ時の親切案内
+  var lockB = document.getElementById("lockOverlayB");
+  if (lockB) {
+    lockB.addEventListener("click", function(e) {
+      e.stopPropagation();
+      AudioEngine.play('badend');
+      UIController.showToast("🔒【エレナ編】はレン編の運命交差によりアンロックされます。");
+    });
+  }
+
+  var lockC = document.getElementById("lockOverlayC");
+  if (lockC) {
+    lockC.addEventListener("click", function(e) {
+      e.stopPropagation();
+      AudioEngine.play('badend');
+      UIController.showToast("🔒【ダニエル編】はエレナ編10:45で密告通報（BAD_10）に直面すると解放されます。");
+    });
+  }
+
+  var lockClimax = document.getElementById("lockOverlayClimax");
+  if (lockClimax) {
+    lockClimax.addEventListener("click", function(e) {
+      e.stopPropagation();
+      AudioEngine.play('badend');
+      UIController.showToast("🔒【クライマックス】は全3名の第2アワー（11:50）クリアで解放されます。");
+    });
+  }
+
+  // 画面タップで段落進行
+  var novelTap = document.getElementById("novelTapZone");
+  if (novelTap) {
+    novelTap.addEventListener("click", function(e) {
+      // TIPSリンク、スキップボタン、またはその子要素をクリックした場合は段落を進めない
+      if (e.target.closest(".tip-link") || e.target.closest("#btnSkipNovel") || e.target.closest("button")) {
+        return;
+      }
+      // TIPSモーダルを閉じた直後のタップ貫通（ゴーストクリック）を防止
+      if (UIController.isTipCooldown && UIController.isTipCooldown()) {
+        return;
+      }
+      GameEngine.showNextParagraph();
+    });
+  }
+
+  // ヘッダー切り替えタブ
+  var tabA = document.getElementById("tabCharA");
+  if (tabA) tabA.addEventListener("click", function() { GameEngine.switchChar("A"); });
+  var tabB = document.getElementById("tabCharB");
+  if (tabB) tabB.addEventListener("click", function() { GameEngine.switchChar("B"); });
+  var tabC = document.getElementById("tabCharC");
+  if (tabC) tabC.addEventListener("click", function() { GameEngine.switchChar("C"); });
+
+  // ホーム・チャート・TIPS（※因果管制室・タイトル復帰はindex.htmlで一元制御）
+  var btnChart = document.getElementById("btnChart");
+  if (btnChart) {
+    btnChart.addEventListener("click", function() {
+      UIController.openChart();
+    });
+  }
+
+  var btnCockpitChart = document.getElementById("btnCockpitOpenChart");
+  if (btnCockpitChart) {
+    btnCockpitChart.addEventListener("click", function() {
+      UIController.openChart();
+    });
+  }
+
+  var btnCloseChart = document.getElementById("btnCloseChart");
+  if (btnCloseChart) {
+    btnCloseChart.addEventListener("click", function() {
+      UIController.closeChart();
+    });
+  }
+
+  var btnCloseTip = document.getElementById("btnCloseTip");
+  if (btnCloseTip) {
+    btnCloseTip.addEventListener("click", function() {
+      UIController.closeTip();
+    });
+  }
+
+  // TIPSリンク委譲クリック（キャプチャフェーズで最優先捕捉し、novelTapZoneへのバブリングを完全遮断）
+  document.addEventListener("click", function(e) {
+    var tipTarget = e.target.closest(".tip-link");
+    if (tipTarget) {
+      e.stopPropagation();
+      e.preventDefault();
+      var term = tipTarget.getAttribute("data-tip");
+      if (term) UIController.openTip(term, tipTarget);
+    }
+  }, true);
+
+  // ブラウザ「戻る」ボタン制御（モーダル閉じ・チャート表示による誤離脱ガード）
+  window.addEventListener("popstate", function(e) {
+    var modalTip = document.getElementById("modalTip");
+    if (modalTip && !modalTip.classList.contains("hidden")) {
+      UIController.closeTip();
+      return;
+    }
+    var modalTimelineChart = document.getElementById("modalTimelineChart");
+    if (modalTimelineChart && !modalTimelineChart.classList.contains("hidden")) {
+      UIController.closeChart();
+      return;
+    }
+    // タイトル画面（viewAuth）ではチャートを開かず誤爆を防止
+    var viewAuth = document.getElementById("viewAuth");
+    if (viewAuth && !viewAuth.classList.contains("hidden")) {
+      return;
+    }
+    // ノベル中・BAD END等のプレイ中に戻るが押された場合のみチャートを開いて安全に保護
+    UIController.openChart();
+  });
+
+  // TRUE END 進行ボタン
+  var btnProceedTrue = document.getElementById("btnProceedTrueEnd");
+  if (btnProceedTrue) {
+    btnProceedTrue.addEventListener("click", function() {
+      GameEngine.advanceTrueEnd();
+    });
+  }
+
+  // 表彰状ボタン
+  var btnCertTrue = document.getElementById("btnCertFromTrue");
+  if (btnCertTrue) {
+    btnCertTrue.addEventListener("click", function() {
+      CertRenderer.openModal();
+    });
+  }
+
+  // TRUE END からのホーム/チャート復帰ボタン
+  var btnHomeTrue = document.getElementById("btnHomeFromTrue");
+  if (btnHomeTrue) {
+    btnHomeTrue.addEventListener("click", function() {
+      AudioEngine.play('tap');
+      UIController.switchView('novel');
+      UIController.openChart();
+    });
+  }
+
+  var btnCertBanner = document.getElementById("btnCertFromBanner");
+  if (btnCertBanner) {
+    btnCertBanner.addEventListener("click", function() {
+      CertRenderer.openModal();
+    });
+  }
+
+  var btnCertChart = document.getElementById("btnChartCertDownload");
+  if (btnCertChart) {
+    btnCertChart.addEventListener("click", function() {
+      CertRenderer.openModal();
+    });
+  }
+
+  var btnCloseCertTop = document.getElementById("btnCloseCertTop");
+  if (btnCloseCertTop) {
+    btnCloseCertTop.addEventListener("click", function() {
+      CertRenderer.closeModal();
+    });
+  }
+
+  var btnCloseCertBottom = document.getElementById("btnCloseCertBottom");
+  if (btnCloseCertBottom) {
+    btnCloseCertBottom.addEventListener("click", function() {
+      CertRenderer.closeModal();
+    });
+  }
+
+  var btnDownloadPdf = document.getElementById("btnDownloadPdf");
+  if (btnDownloadPdf) {
+    btnDownloadPdf.addEventListener("click", function() {
+      CertRenderer.downloadPdf();
+    });
+  }
+});
+</script>

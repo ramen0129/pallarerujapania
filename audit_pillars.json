@@ -1,0 +1,131 @@
+{
+  "metadata": {
+    "council_name": "柱合会議（十一柱合議制）決定論的CI監査マトリクス",
+    "receipt_id": "RCP-1791710434396",
+    "timestamp": "2026-10-11T09:20:34.396Z",
+    "scenario_sha256": "6e2e16224a3df1970c16764e2d32fa6090d38db7ebe80949a83c87da1b2c8ac3",
+    "status": "PASSED"
+  },
+  "evaluations": [
+    {
+      "pillar_id": "REIKA_DEFECTLESS",
+      "name": "零瑕柱",
+      "domain": "構文・破損リンク・CI完全無欠性",
+      "target_files": [
+        "simulate_all_paths.js",
+        "build_preview.js"
+      ],
+      "verdict": "PASS",
+      "evidence": "総ノード数: 160, 破損リンク: 0, ルールエラー: 0"
+    },
+    {
+      "pillar_id": "HANSHO_FALSIFICATION",
+      "name": "反証柱",
+      "domain": "異常系操作・連打耐性・極限状態",
+      "target_files": [
+        "js_ui.html",
+        "js_state.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "isTransitioningガード、popstate安全同期、rebuildFlags排他処理"
+    },
+    {
+      "pillar_id": "KEIYAKU_CONTRACT",
+      "name": "契約柱",
+      "domain": "スプレッドシートスキーマ・LockService排他",
+      "target_files": [
+        "Code.js",
+        "js_state.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "11カラム完全永続化、LockService(30000)排他ロック、sanitizeInput実装"
+    },
+    {
+      "pillar_id": "JISSHO_EMPIRICAL",
+      "name": "実証柱",
+      "domain": "推測排除・実コード実行ログ・実証主義",
+      "target_files": [
+        "audit_receipt.json",
+        "audit_pillars.json"
+      ],
+      "verdict": "PASS",
+      "evidence": "SHA256ハッシュ: 6e2e16224a3df197..., 実行所要時間 < 1.0s"
+    },
+    {
+      "pillar_id": "GENBA_CLASSROOM",
+      "name": "現場柱",
+      "domain": "学校現場・Chromebook環境・45分枠",
+      "target_files": [
+        "css.html",
+        "js_state.html",
+        "index.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "LocalStorage即時キャッシュ、45分枠（15分×3アワー）"
+    },
+    {
+      "pillar_id": "JISA_LATENCY",
+      "name": "時差柱",
+      "domain": "非同期競合・通信遅延・ロールバック",
+      "target_files": [
+        "js_state.html",
+        "js_engine.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "rollbackFutureSlotsによる過去JUMP時未来スロット強制初期化"
+    },
+    {
+      "pillar_id": "INGA_CAUSALITY",
+      "name": "因果柱",
+      "domain": "428型中置因果・認知境界・行動連続性",
+      "target_files": [
+        "scenario_climax.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "DIR_08認知境界違反0件、残骸検知Linter 0件、12:20首輪解除と12:35タワー停止の時系列整列"
+    },
+    {
+      "pillar_id": "ISHO_AESTHETICS",
+      "name": "意匠柱",
+      "domain": "サイバーパンクデザイン・配色整合性・視認性",
+      "target_files": [
+        "css.html",
+        "js_ui.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "Vanilla CSSダーク基調、三色識別、BAD END暗転・赤閃光演出"
+    },
+    {
+      "pillar_id": "KENDO_CONSTITUTION",
+      "name": "憲道柱",
+      "domain": "条文秘匿・三大基本的人権・判例純度",
+      "target_files": [
+        "js_tips.html",
+        "scenario_climax.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "12:15前条文番号秘匿0件、TIPS全19件・クイズ10問完全配備"
+    },
+    {
+      "pillar_id": "SENRITSU_MELODY",
+      "name": "旋律柱",
+      "domain": "Web Audio API・プロシージャル音響・負荷ゼロ",
+      "target_files": [
+        "js_audio.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "外部音声ロード0本、内蔵オシレーターシンセシスによるゼロ遅延"
+    },
+    {
+      "pillar_id": "KANSEI_SUPERVISION",
+      "name": "管制柱",
+      "domain": "教員ダッシュボード・進捗俯瞰・生徒レスキュー",
+      "target_files": [
+        "Code.js",
+        "js_ui.html"
+      ],
+      "verdict": "PASS",
+      "evidence": "スプレッドシート集計による生徒進捗・BAD END遭遇状況のリアルタイム可視化"
+    }
+  ]
+}

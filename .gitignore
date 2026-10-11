@@ -1,0 +1,23 @@
+# Exclude heavy raw images and PDFs
+*.jpg
+*.jpeg
+*.png
+*.pdf
+character_images_base64.js
+character_images_base64.json
+
+# Credentials & Sensitive info (NEVER COMMIT)
+.clasprc.json
+.clasp.json
+
+# Subproject work directories, scratch, & Nested git repositories
+github_107/
+scratch/
+
+
+# Dependencies and temporary files
+node_modules/
+*.tmp
+*.log
+.vscode/
+

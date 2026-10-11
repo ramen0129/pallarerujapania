@@ -1,0 +1,565 @@
+<script>
+/**
+ * 『パラレル・ジャパニア：クロニクル 〜失われた人権の180分〜』
+ * タイムライン状態・タイムブロック（Hour制）管理モジュール
+ */
+var TimelineState = (function() {
+  var STORAGE_KEY = "PARALLEL_JAPANIA_CHRONICLE_SAVE_v5";
+  var memoryFallbackState = null;
+
+  var state = {
+    studentName: "",
+    passcode: "",
+    currentChar: "A",
+    currentNodeKey: "A_1000",
+    lastCharNodes: { A: "A_1000", B: "B_1000", C: "C_1000" },
+    slots: {},
+    flags: {},
+    userFlags: [],
+    visitedNodes: ["A_1000"],
+    unlockedEndings: {},
+    badEndWitnesses: {},
+    unlockedTips: {},
+    masteredTips: {},
+    hasClearedOnce: false,
+    trophies: {},
+    seenUnlockAnim_B: false,
+    seenUnlockAnim_C: false
+  };
+
+  function rebuildFlags() {
+    var flags = new Set();
+    Object.keys(state.slots).forEach(function(k) {
+      var val = state.slots[k];
+      if (typeof val === "string") {
+        flags.add(val);
+      } else if (val === true) {
+        flags.add(k);
+      }
+    });
+
+    // 12:10-12:20 クライマックス相互排他フラグの厳格同期
+    if (state.slots["CLIMAX_REN_EXEC"] === "REN_PRESS") {
+      flags.add("FLAG_REN_PRESSED");
+      flags.delete("FLAG_REN_ABORTED");
+    } else if (state.slots["CLIMAX_REN_EXEC"] === "REN_ABORT") {
+      flags.add("FLAG_REN_ABORTED");
+      flags.delete("FLAG_REN_PRESSED");
+    }
+
+    if (state.slots["CLIMAX_ELENA_EXEC"] === "ELENA_PRESS") {
+      flags.add("FLAG_ELENA_PRESSED");
+      flags.delete("FLAG_ELENA_ABORTED");
+    } else if (state.slots["CLIMAX_ELENA_EXEC"] === "ELENA_ABORT") {
+      flags.add("FLAG_ELENA_ABORTED");
+      flags.delete("FLAG_ELENA_PRESSED");
+    }
+
+    if (state.slots["CLIMAX_DANIEL_EXEC"] === "DANIEL_PRESS") {
+      flags.add("FLAG_DANIEL_PRESSED");
+      flags.delete("FLAG_DANIEL_ABORTED");
+    } else if (state.slots["CLIMAX_DANIEL_EXEC"] === "DANIEL_ABORT") {
+      flags.add("FLAG_DANIEL_ABORTED");
+      flags.delete("FLAG_DANIEL_PRESSED");
+    }
+
+    // 保有フラグもマージ（排他ルールを維持）
+    state.userFlags.forEach(function(f) {
+      if (state.slots["CLIMAX_REN_EXEC"] === "REN_PRESS" && f === "FLAG_REN_ABORTED") return;
+      if (state.slots["CLIMAX_REN_EXEC"] === "REN_ABORT" && f === "FLAG_REN_PRESSED") return;
+      if (state.slots["CLIMAX_ELENA_EXEC"] === "ELENA_PRESS" && f === "FLAG_ELENA_ABORTED") return;
+      if (state.slots["CLIMAX_ELENA_EXEC"] === "ELENA_ABORT" && f === "FLAG_ELENA_PRESSED") return;
+      if (state.slots["CLIMAX_DANIEL_EXEC"] === "DANIEL_PRESS" && f === "FLAG_DANIEL_ABORTED") return;
+      if (state.slots["CLIMAX_DANIEL_EXEC"] === "DANIEL_ABORT" && f === "FLAG_DANIEL_PRESSED") return;
+      flags.add(f);
+    });
+    state.userFlags = Array.from(flags);
+
+    // シナリオ側 (state.flags["..."]) 参照のための辞書マップを常時自動同期
+    state.flags = {};
+    state.userFlags.forEach(function(f) {
+      state.flags[f] = true;
+    });
+    Object.keys(state.slots).forEach(function(k) {
+      state.flags[k] = state.slots[k];
+    });
+  }
+
+  function rollbackFutureSlots(targetNodeId) {
+    var targetNode = MASTER_DB.nodes[targetNodeId];
+    if (!targetNode || !targetNode.time) return;
+
+    var targetMinutes = parseTimeToMinutes(targetNode.time);
+    var targetChar = targetNode.char || "ALL";
+
+    // クライマックス内部（12:00以降のノード）の遷移では、他キャラクターのクライマックス決断スロット・フラグを絶対に消去しない！
+    // 12:00未満（Hour 1 / Hour 2）へ本格的にタイムトラベル逆行する場合のみ、クライマックスのスロットを除去
+    var isInsideClimax = (targetNodeId.startsWith("CLIMAX_") || targetNodeId.includes("EVAL_") ||
+                          targetNodeId.startsWith("BAD_REN_") || targetNodeId.startsWith("BAD_ELENA_") || targetNodeId.startsWith("BAD_DANIEL_") ||
+                          ["BAD_06", "BAD_07", "BAD_08", "BAD_09", "BAD_23", "BAD_24", "BAD_25", "BAD_26"].indexOf(targetNodeId) !== -1);
+
+    if (targetMinutes < 720 && !isInsideClimax) {
+      Object.keys(state.slots).forEach(function(k) {
+        if (k.indexOf("CLIMAX_") === 0) {
+          delete state.slots[k];
+        }
+      });
+      state.userFlags = state.userFlags.filter(function(f) {
+        return !f.startsWith("FLAG_REN_") && !f.startsWith("FLAG_ELENA_") && !f.startsWith("FLAG_DANIEL_") && !f.startsWith("CLIMAX_");
+      });
+    }
+
+    // ターゲットノード自身が発行する選択肢スロットの強制クリア（同刻JUMP時でも前回の誤選択がゾンビ残留しないよう未選択に初期化）
+    if (targetNode.choices) {
+      targetNode.choices.forEach(function(ch) {
+        if (ch.slot && state.slots[ch.slot]) {
+          delete state.slots[ch.slot];
+        }
+      });
+    }
+
+    Object.keys(state.slots).forEach(function(slotKey) {
+      if (targetChar === "ALL" || slotKey.indexOf(targetChar + "_") === 0) {
+        var parts = slotKey.split("_");
+        var nodeTimeStr = parts[1];
+        var slotMinutes = parseNodeTimeCodeToMinutes(nodeTimeStr);
+        if (slotMinutes > targetMinutes) {
+          delete state.slots[slotKey];
+        }
+      }
+    });
+    // アワー進捗フラグのロールバック
+    var charsToClean = (targetChar === "ALL") ? ["A", "B", "C"] : [targetChar];
+    charsToClean.forEach(function(c) {
+      if (targetMinutes < 660) {
+        delete state.slots[c + "_HOUR1_CLEAR"];
+        delete state.slots[c + "_HOUR2_CLEAR"];
+        state.userFlags = state.userFlags.filter(function(f) {
+          return f !== (c + "_HOUR1_CLEAR") && f !== (c + "_HOUR2_CLEAR") &&
+                 f !== (c === "A" ? "A_FREEDOM_DONE" : (c === "B" ? "B_EQUALITY_DONE" : "C_SOCIAL_DONE"));
+        });
+      } else if (targetMinutes < 710) {
+        delete state.slots[c + "_HOUR2_CLEAR"];
+        state.userFlags = state.userFlags.filter(function(f) {
+          return f !== (c + "_HOUR2_CLEAR") &&
+                 f !== (c === "A" ? "A_FREEDOM_DONE" : (c === "B" ? "B_EQUALITY_DONE" : "C_SOCIAL_DONE"));
+        });
+      }
+    });
+
+    rebuildFlags();
+  }
+
+  function parseTimeToMinutes(tStr) {
+    var parts = tStr.split(":");
+    return parts.length === 2 ? (parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10)) : 0;
+  }
+
+  function parseNodeTimeCodeToMinutes(code) {
+    if (code && code.length >= 4) {
+      var h = parseInt(code.substring(0, 2), 10);
+      var m = parseInt(code.substring(2, 4), 10);
+      return h * 60 + m;
+    }
+    return 0;
+  }
+
+  function rollbackSlotsForChar(charKey, minMinutes) {
+    Object.keys(state.slots).forEach(function(slotKey) {
+      if (charKey === "ALL" || slotKey.indexOf(charKey + "_") === 0) {
+        var parts = slotKey.split("_");
+        var nodeTimeStr = parts[1];
+        var slotMinutes = parseNodeTimeCodeToMinutes(nodeTimeStr);
+        if (slotMinutes >= minMinutes) {
+          delete state.slots[slotKey];
+        }
+      }
+    });
+    // クライマックスの連動消去
+    if (minMinutes <= 720) {
+      var charNameTag = (charKey === "A" ? "REN" : (charKey === "B" ? "ELENA" : "DANIEL"));
+      delete state.slots["CLIMAX_" + charNameTag + "_CHOICE"];
+      delete state.slots["CLIMAX_" + charNameTag + "_EXEC"];
+    }
+
+    // アワー進捗フラグの連動ロールバック
+    var charsToClean = (charKey === "ALL") ? ["A", "B", "C"] : [charKey];
+    charsToClean.forEach(function(c) {
+      if (minMinutes <= 660) {
+        delete state.slots[c + "_HOUR1_CLEAR"];
+        delete state.slots[c + "_HOUR2_CLEAR"];
+        state.userFlags = state.userFlags.filter(function(f) {
+          return f !== (c + "_HOUR1_CLEAR") && f !== (c + "_HOUR2_CLEAR") &&
+                 f !== (c === "A" ? "A_FREEDOM_DONE" : (c === "B" ? "B_EQUALITY_DONE" : "C_SOCIAL_DONE"));
+        });
+      } else if (minMinutes <= 710) {
+        delete state.slots[c + "_HOUR2_CLEAR"];
+        state.userFlags = state.userFlags.filter(function(f) {
+          return f !== (c + "_HOUR2_CLEAR") &&
+                 f !== (c === "A" ? "A_FREEDOM_DONE" : (c === "B" ? "B_EQUALITY_DONE" : "C_SOCIAL_DONE"));
+        });
+      }
+    });
+
+    rebuildFlags();
+  }
+
+  function applyCrossCharacterCausality(changedSlotKey, newValue) {
+    if (!changedSlotKey || !newValue) return;
+
+    // 1. エレナが水門爆破（B_1030 = B_BLOW_GATE）
+    // ➔ レンとダニエルが水没（10:45以降の未来消滅）
+    if (changedSlotKey === "B_1030" && newValue === "B_BLOW_GATE") {
+      rollbackSlotsForChar("A", 645);
+      rollbackSlotsForChar("C", 645);
+    }
+
+    // 2. レンが暴走マイク（A_1000 = A_PANIC_MIC）
+    // ➔ エレナが10:15で軟禁捕縛
+    if (changedSlotKey === "A_1000" && newValue === "A_PANIC_MIC") {
+      rollbackSlotsForChar("B", 615);
+    }
+
+    // 3. ダニエルが警備兵拒絶（C_1000 = C_DENY_POLICE）
+    // ➔ エレナが10:45で密告通報捕縛
+    if (changedSlotKey === "C_1000" && newValue === "C_DENY_POLICE") {
+      rollbackSlotsForChar("B", 645);
+    }
+
+    // 4. エレナが全送電遮断（B_1115 = B_NET_CUT）
+    // ➔ レンが11:25でドローン墜落
+    if (changedSlotKey === "B_1115" && newValue === "B_NET_CUT") {
+      rollbackSlotsForChar("A", 685);
+    }
+
+    // 5. ダニエルがストライキ降伏（C_1110 = C_SURRENDER）
+    // ➔ レンが11:45で毒ガス、エレナが11:45で回廊包囲
+    if (changedSlotKey === "C_1110" && newValue === "C_SURRENDER") {
+      rollbackSlotsForChar("A", 705);
+      rollbackSlotsForChar("B", 705);
+    }
+
+    // 6. ダニエルがサイレン強行（C_1135 = C_SIREN_RUSH）
+    // ➔ エレナが11:45で被弾巻き添え
+    if (changedSlotKey === "C_1135" && newValue === "C_SIREN_RUSH") {
+      rollbackSlotsForChar("B", 705);
+    }
+
+    // 7. レンが略奪扇動（A_1130 = A_SPEECH_RIOT）
+    // ➔ ダニエルの診療所が11:40で略奪崩壊
+    if (changedSlotKey === "A_1130" && newValue === "A_SPEECH_RIOT") {
+      rollbackSlotsForChar("C", 700);
+    }
+
+    // 8. ダニエルが統制命令（C_1045 = C_LEADER_ORDER）
+    // ➔ レンが11:30で聴衆皆無
+    if (changedSlotKey === "C_1045" && newValue === "C_LEADER_ORDER") {
+      rollbackSlotsForChar("A", 690);
+    }
+
+    saveLocal();
+  }
+
+  // 428型 アワー進捗判定（因果スロットに基づく純粋動的評価・ゴーストクリア防止）
+  function getHourProgress() {
+    var s = state.slots || {};
+
+    // Hour 1 (10:00 - 11:00) 完了判定（11:00到達フラグまたは11:00スロット保有、かつ因果生存）
+    var h1_ren = Boolean((s["A_HOUR1_CLEAR"] || s["A_1100"]) && s["B_1030"] !== "B_BLOW_GATE");
+    var h1_elena = Boolean((s["B_HOUR1_CLEAR"] || s["B_1100"]) && s["A_1000"] !== "A_PANIC_MIC" && s["C_1000"] !== "C_DENY_POLICE");
+    var h1_daniel = Boolean((s["C_HOUR1_CLEAR"] || s["C_1100"]) && s["B_1030"] !== "B_BLOW_GATE");
+    var h1_all = (h1_ren && h1_elena && h1_daniel);
+
+    // Hour 2 (11:00 - 12:00) 完了判定（11:50到達フラグまたは11:50スロット保有、かつ因果生存）
+    var h2_ren = Boolean(h1_ren && (s["A_HOUR2_CLEAR"] || s["A_1150"]) && s["B_1115"] !== "B_NET_CUT" && s["C_1110"] === "C_STRIKE_GO");
+    var h2_elena = Boolean(h1_elena && (s["B_HOUR2_CLEAR"] || s["B_1150"]) && s["C_1000"] !== "C_DENY_POLICE" && s["C_1135"] !== "C_SIREN_RUSH" && s["C_1110"] === "C_STRIKE_GO");
+    var h2_daniel = Boolean(h1_daniel && (s["C_HOUR2_CLEAR"] || s["C_1150"]) && s["A_1130"] === "A_SPEECH_REBEL");
+    var h2_all = (h2_ren && h2_elena && h2_daniel);
+
+    return {
+      hour1: {
+        A: h1_ren,
+        B: h1_elena,
+        C: h1_daniel,
+        allClear: h1_all
+      },
+      hour2: {
+        A: h2_ren,
+        B: h2_elena,
+        C: h2_daniel,
+        allClear: h2_all
+      },
+      climaxUnlocked: (h1_all && h2_all)
+    };
+  }
+
+  function markHourClear(charKey, hourNum) {
+    var flag = charKey + "_HOUR" + hourNum + "_CLEAR";
+    if (state.userFlags.indexOf(flag) === -1) {
+      state.userFlags.push(flag);
+    }
+    state.slots[flag] = true;
+    rebuildFlags();
+    saveLocal();
+  }
+
+  function saveLocal() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      memoryFallbackState = JSON.parse(JSON.stringify(state));
+      console.error("Local state save error", e);
+    }
+  }
+
+  function loadLocal() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw && memoryFallbackState) {
+        raw = JSON.stringify(memoryFallbackState);
+      }
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed.studentName) {
+          Object.assign(state, parsed);
+          state.slots = parsed.slots || {};
+          state.lastCharNodes = Object.assign({ A: "A_1000", B: "B_1000", C: "C_1000" }, parsed.lastCharNodes || {});
+          rebuildFlags();
+          state.visitedNodes = Array.from(new Set(state.visitedNodes.concat(parsed.visitedNodes || [])));
+          state.unlockedEndings = Object.assign({}, state.unlockedEndings, parsed.unlockedEndings || {});
+          state.unlockedTips = Object.assign({}, state.unlockedTips, parsed.unlockedTips || {});
+          state.masteredTips = Object.assign({}, state.masteredTips, parsed.masteredTips || {});
+          state.trophies = Object.assign({}, parsed.trophies || {});
+          state.hasClearedOnce = Boolean(
+            (parsed.unlockedEndings && (parsed.unlockedEndings["NORMAL_CLEAR"] || parsed.unlockedEndings["TRUE_SECRET_END"])) ||
+            (parsed.visitedNodes && (parsed.visitedNodes.indexOf("NORMAL_CLEAR") !== -1 || parsed.visitedNodes.indexOf("TRUE_SECRET_END") !== -1))
+          );
+        }
+      }
+    } catch (e) {
+      console.error("Local state load error", e);
+    }
+  }
+
+  function isTipMastered(term) {
+    return Boolean(state.masteredTips && state.masteredTips[term]);
+  }
+
+  function markTipMastered(term) {
+    if (!state.masteredTips) state.masteredTips = {};
+    state.masteredTips[term] = true;
+    saveLocal();
+  }
+
+  function hasMasteredAllTips() {
+    var tipsDb = (typeof TIPS_MASTER !== "undefined") ? TIPS_MASTER : (MASTER_DB.tips || {});
+    var allKeys = Object.keys(tipsDb);
+    if (allKeys.length === 0) return false;
+    if (!state.masteredTips) return false;
+    for (var i = 0; i < allKeys.length; i++) {
+      var k = allKeys[i];
+      if (!state.masteredTips[k]) return false;
+    }
+    return true;
+  }
+
+  function hasClearedOnce() {
+    return Boolean(
+      state.hasClearedOnce ||
+      (state.unlockedEndings && (state.unlockedEndings["NORMAL_CLEAR"] || state.unlockedEndings["TRUE_SECRET_END"])) ||
+      (state.visitedNodes && (state.visitedNodes.indexOf("NORMAL_CLEAR") !== -1 || state.visitedNodes.indexOf("TRUE_SECRET_END") !== -1))
+    );
+  }
+
+  function hasClearedTrueEnd() {
+    return Boolean(
+      (state.unlockedEndings && state.unlockedEndings["TRUE_SECRET_END"]) ||
+      (state.visitedNodes && state.visitedNodes.indexOf("TRUE_SECRET_END") !== -1)
+    );
+  }
+
+  function markCleared(endingKey) {
+    state.hasClearedOnce = true;
+    if (!state.unlockedEndings) state.unlockedEndings = {};
+    state.unlockedEndings[endingKey || "NORMAL_CLEAR"] = true;
+    saveLocal();
+  }
+
+  // 5大栄誉トロフィー管理API
+  function unlockTrophy(key) {
+    if (!state.trophies) state.trophies = {};
+    var isFirst = !state.trophies[key];
+    state.trophies[key] = true;
+    saveLocal();
+    return isFirst;
+  }
+
+  function hasTrophy(key) {
+    return Boolean(state.trophies && state.trophies[key]);
+  }
+
+  function getUnlockedTrophies() {
+    return state.trophies || {};
+  }
+
+  function syncServer(sceneTitle) {
+    saveLocal();
+    var indicator = document.getElementById("saveStatus");
+    if (indicator) indicator.textContent = "同期中...";
+
+    if (typeof google !== "undefined" && google.script && google.script.run) {
+      var payload = {
+        studentName: state.studentName,
+        passcode: state.passcode,
+        currentCharName: state.currentChar === "A" ? "レン（自由権）" : state.currentChar === "B" ? "エレナ（平等権）" : "ダニエル（社会権）",
+        currentSceneTitle: sceneTitle || "進行中",
+        currentNodeKey: state.currentNodeKey,
+        userFlags: state.userFlags,
+        visitedNodes: state.visitedNodes,
+        unlockedEndings: state.unlockedEndings,
+        slots: state.slots,
+        trophies: state.trophies || {},
+        lastCharNodes: state.lastCharNodes || { A: "A_1000", B: "B_1000", C: "C_1000" },
+        unlockedTips: state.unlockedTips || {},
+        masteredTips: state.masteredTips || {},
+        clientTimestamp: Date.now()
+      };
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (indicator) {
+            indicator.textContent = (res && res.time) ? (res.time + " 保存済") : "保存完了";
+          }
+        })
+        .withFailureHandler(function() {
+          if (indicator) indicator.textContent = "ローカル保存済";
+        })
+        .saveProgress(payload);
+    } else {
+      if (indicator) indicator.textContent = "ローカル保存済";
+    }
+  }
+
+  // 開発・検証・評価用デバッグモード：全シナリオ・結末・TIPS・裏設定完全アンロック
+  function applyDebugUnlockState() {
+    state.studentName = "ラーメン";
+    state.passcode = "0129";
+    state.hasClearedOnce = true;
+    state.currentNodeKey = "CLIMAX_HUB";
+    state.currentChar = "A";
+
+    // 1. 全結末（BAD_01〜BAD_26、NORMAL_CLEAR、TRUE_SECRET_END）の完全解放
+    state.unlockedEndings = {
+      "NORMAL_CLEAR": true,
+      "TRUE_SECRET_END": true
+    };
+    for (var i = 1; i <= 26; i++) {
+      var bId = "BAD_" + (i < 10 ? "0" + i : i);
+      state.unlockedEndings[bId] = true;
+    }
+
+    // 2. 全19TIPSの完全解放＆完全修得（オーガスト卿含む）
+    state.unlockedTips = {};
+    state.masteredTips = {};
+    var tipsDb = (typeof TIPS_MASTER !== "undefined") ? TIPS_MASTER : (window.TIPS_MASTER || {});
+    var allTipKeys = Object.keys(tipsDb);
+    if (allTipKeys.length === 0) {
+      allTipKeys = [
+        '身体の自由', '表現の自由', '法の下の平等', '生存権', '労働基本権',
+        '公共の福祉', '一票の格差', '思想・良心の自由', '信教の自由と政教分離',
+        '財産権の保障と制約', '幸福追求権とプライバシー', '知る権利と報道の自由',
+        '教育を受ける権利', '裁判を受ける権利', '居住・移転および職業選択の自由',
+        '憲法尊重擁護義務', '最高法規と永久の信託', '国民主権と三権分立', 'オーガスト卿'
+      ];
+    }
+    allTipKeys.forEach(function(k) {
+      state.unlockedTips[k] = true;
+      state.masteredTips[k] = true;
+    });
+
+    // 3. 全5大トロフィー＋隠しトロフィーの完全獲得
+    state.trophies = {
+      "normalClear": true,
+      "trueEnd": true,
+      "badMaster": true,
+      "tipsMaster": true,
+      "shinMaster": true,
+      "augustMaster": true
+    };
+
+    // 4. アワー進捗・三大管制室到達フラグ・古遺物フラグの設定
+    var debugFlags = [
+      "A_HOUR1_CLEAR", "B_HOUR1_CLEAR", "C_HOUR1_CLEAR",
+      "A_HOUR2_CLEAR", "B_HOUR2_CLEAR", "C_HOUR2_CLEAR",
+      "A_FREEDOM_DONE", "B_EQUALITY_DONE", "C_SOCIAL_DONE",
+      "PIECE_A", "PIECE_B", "PIECE_C",
+      "FLAG_REN_PRESSED", "FLAG_ELENA_PRESSED", "FLAG_DANIEL_PRESSED",
+      "DEBUG_ALL_UNLOCKED"
+    ];
+    debugFlags.forEach(function(f) {
+      if (state.userFlags.indexOf(f) === -1) state.userFlags.push(f);
+      state.slots[f] = true;
+    });
+
+    // 5. 訪問済みノードの完全網羅（外伝・特別編・全BAD END）
+    var allNodeKeys = (typeof MASTER_DB !== "undefined" && MASTER_DB.nodes) ? Object.keys(MASTER_DB.nodes) : [];
+    var essentialNodes = [
+      "A_1000", "B_1000", "C_1000",
+      "A_1045_WATERGATE", "B_1030_OPEN",
+      "A_1100", "B_1100", "C_1100",
+      "A_1150", "B_1150", "C_1150",
+      "CLIMAX_HUB", "NORMAL_CLEAR", "TRUE_SECRET_END",
+      "SHIN_01_MEMORY", "SHIN_06_PROLOGUE_LOOP",
+      "SIDE_AUGUST",
+      "TALK_01", "TALK_FIN"
+    ];
+    for (var bi = 1; bi <= 26; bi++) {
+      essentialNodes.push("BAD_" + (bi < 10 ? "0" + bi : bi));
+    }
+    state.visitedNodes = Array.from(new Set(state.visitedNodes.concat(allNodeKeys).concat(essentialNodes)));
+
+    // スロットの主要因果（全員生存・ハッピー解決ルート）
+    state.slots["A_1000"] = "A_BROKE_FORCE";
+    state.slots["A_1015"] = "A_SMOKE";
+    state.slots["A_1030"] = "A_TAKE_PLATE";
+    state.slots["B_1000"] = "B_HACK_LABOR";
+    state.slots["B_1030"] = "B_OPEN_GATE";
+    state.slots["C_1000"] = "C_HEAL";
+    state.slots["C_1045"] = "C_PODIUM_ROAR";
+    state.slots["C_1110"] = "C_STRIKE_GO";
+    state.slots["B_1115"] = "B_CODE_SENT";
+    state.slots["CLIMAX_REN_EXEC"] = "REN_PRESS";
+    state.slots["CLIMAX_ELENA_EXEC"] = "ELENA_PRESS";
+    state.slots["CLIMAX_DANIEL_EXEC"] = "DANIEL_PRESS";
+    state.seenUnlockAnim_B = true;
+    state.seenUnlockAnim_C = true;
+
+    rebuildFlags();
+    saveLocal();
+    return state;
+  }
+
+  return {
+    getState: function() { return state; },
+    rebuildFlags: rebuildFlags,
+    rollbackFutureSlots: rollbackFutureSlots,
+    rollbackSlotsForChar: rollbackSlotsForChar,
+    applyCrossCharacterCausality: applyCrossCharacterCausality,
+    getHourProgress: getHourProgress,
+    markHourClear: markHourClear,
+    saveLocal: saveLocal,
+    loadLocal: loadLocal,
+    syncServer: syncServer,
+    hasClearedOnce: hasClearedOnce,
+    hasClearedTrueEnd: hasClearedTrueEnd,
+    markCleared: markCleared,
+    unlockTrophy: unlockTrophy,
+    hasTrophy: hasTrophy,
+    getUnlockedTrophies: getUnlockedTrophies,
+    isTipMastered: isTipMastered,
+    markTipMastered: markTipMastered,
+    hasMasteredAllTips: hasMasteredAllTips,
+    applyDebugUnlockState: applyDebugUnlockState
+  };
+})();
+</script>

@@ -1,0 +1,15 @@
+{
+  "name": "parallel-japania-chronicle",
+  "version": "2.0.0",
+  "description": "428-style Constitutional Timeline Adventure Game",
+  "scripts": {
+    "test": "node simulate_all_paths.js",
+    "build": "node build_preview.js",
+    "inspect": "node inspect_causal_neighborhood.js",
+    "script": "node export_path_script.js",
+    "start": "node server.js",
+    "deploy": "node deploy.js"
+  },
+  "author": "Antigravity & Project Parallel Japania",
+  "license": "UNLICENSED"
+}

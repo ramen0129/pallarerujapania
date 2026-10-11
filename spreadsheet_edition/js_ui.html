@@ -1,0 +1,3520 @@
+<script>
+var UIController = (function() {
+  var tipCooldownUntil = 0;
+  var lastClickedTipTarget = null;
+
+  function switchView(viewName, skipHistoryPush) {
+    var views = ["viewAuth", "viewNovel", "viewKeepOut", "viewBadEnd", "viewTrueEnd"];
+    views.forEach(function(v) {
+      var el = document.getElementById(v);
+      if (el) el.classList.add("hidden");
+    });
+
+    var targetId = "viewNovel";
+    if (viewName === "auth" || viewName === "start") {
+      targetId = "viewAuth";
+    } else if (viewName === "keepout") {
+      targetId = "viewKeepOut";
+      if (typeof AudioEngine !== "undefined" && AudioEngine.stopBGM) AudioEngine.stopBGM(0.3);
+    } else if (viewName === "badend") {
+      targetId = "viewBadEnd";
+      if (typeof AudioEngine !== "undefined" && AudioEngine.stopBGM) AudioEngine.stopBGM(0.3);
+    } else if (viewName === "trueend") {
+      targetId = "viewTrueEnd";
+      if (typeof AudioEngine !== "undefined" && AudioEngine.playBGM) AudioEngine.playBGM("ending");
+    }
+
+    var targetEl = document.getElementById(targetId);
+    if (targetEl) targetEl.classList.remove("hidden");
+
+    var isNovel = (viewName === "novel");
+    var tabCont = document.getElementById("charTabContainer");
+    if (tabCont) tabCont.classList.toggle("hidden", !isNovel);
+
+    // 時間軸図鑑ボタン：認証完了後（司令室、ノベル、BAD END、KEEP OUT）は常時アクセス可能！
+    var btnChart = document.getElementById("btnChart");
+    var authScreen = document.getElementById("authLoginScreen");
+    var isAuthScreenVisible = authScreen && !authScreen.classList.contains("hidden");
+    if (btnChart) {
+      btnChart.classList.toggle("hidden", isAuthScreenVisible);
+    }
+
+    // 因果管制室へ戻るボタン：ノベル画面や結果画面等で表示（auth画面以外）
+    var btnGoCockpit = document.getElementById("btnGoCockpit");
+    if (btnGoCockpit) btnGoCockpit.classList.toggle("hidden", viewName === "auth");
+    var btnHome = document.getElementById("btnHome");
+    if (btnHome) btnHome.classList.toggle("hidden", viewName === "auth");
+
+    if (!skipHistoryPush) {
+      try {
+        if (window.history && window.history.pushState) {
+          window.history.pushState({ view: viewName }, "", "#" + viewName);
+        }
+      } catch (e) {
+        // GAS iframe等でのSecurityError抑制
+      }
+    }
+  }
+
+  function updateHeaderTabs() {
+    var state = TimelineState.getState();
+    var c = state.currentChar;
+
+    var tabA = document.getElementById("tabCharA");
+    var tabB = document.getElementById("tabCharB");
+    var tabC = document.getElementById("tabCharC");
+
+    var base = "char-tab px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ";
+    if (tabA) tabA.className = base + (c === "A" ? "text-emerald-400 bg-neutral-800 border border-emerald-500" : "text-neutral-400 hover:bg-neutral-800");
+    if (tabB) tabB.className = base + (c === "B" ? "text-sky-400 bg-neutral-800 border border-sky-500" : "text-neutral-400 hover:bg-neutral-800");
+    if (tabC) tabC.className = base + (c === "C" ? "text-amber-400 bg-neutral-800 border border-amber-500" : "text-neutral-400 hover:bg-neutral-800");
+  }
+
+  function flashScreen() {
+    var overlay = document.getElementById("vfxOverlay");
+    if (!overlay) return;
+    overlay.className = "absolute inset-0 pointer-events-none z-50 bg-red-600/40 transition-none";
+    setTimeout(function() {
+      overlay.className = "absolute inset-0 pointer-events-none z-50 bg-transparent transition-colors duration-300";
+    }, 80);
+  }
+
+  function shakeScreen() {
+    var novel = document.getElementById("viewNovel");
+    if (novel) {
+      novel.classList.add("shake-screen");
+      setTimeout(function() { novel.classList.remove("shake-screen"); }, 380);
+    }
+  }
+
+  function showToast(msg) {
+    var toast = document.createElement("div");
+    toast.className = "fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2.5 bg-neutral-900/95 text-amber-300 text-xs sm:text-sm font-bold rounded-xl border border-amber-500/50 shadow-2xl z-50 flex items-center gap-2 para-in";
+    toast.innerHTML = '<span>⚡</span><span>' + msg.replace(/\n/g, '<br>') + '</span>';
+    document.body.appendChild(toast);
+    setTimeout(function() {
+      toast.style.opacity = "0";
+      toast.style.transition = "opacity 0.3s";
+      setTimeout(function() { toast.remove(); }, 300);
+    }, 2800);
+  }
+
+  var causalityTimer = null;
+  function showCausalityShift(msg, subtext) {
+    var banner = document.getElementById("causalityBanner");
+    var textEl = document.getElementById("causalityBannerText");
+    var novelView = document.getElementById("viewNovel");
+
+    if (textEl && msg) {
+      textEl.textContent = msg;
+    }
+    if (subtext && banner) {
+      var subEl = banner.querySelector(".tracking-widest");
+      if (subEl) subEl.textContent = subtext;
+    }
+
+    // 428式 因果変転シンセサイザー効果音再生
+    AudioEngine.play('causality');
+
+    // 画面フラッシュ（サイバーシアン）
+    flashScreen('rgba(56, 189, 248, 0.35)', 300);
+
+    // ノベル画面の因果波紋エフェクト
+    if (novelView) {
+      novelView.classList.remove("causality-ripple-anim");
+      void novelView.offsetWidth; // リフロー強制
+      novelView.classList.add("causality-ripple-anim");
+    }
+
+    // バナー表示とアニメーション
+    if (banner) {
+      banner.classList.remove("hidden");
+      banner.classList.remove("causality-banner-anim");
+      void banner.offsetWidth; // リフロー強制
+      banner.classList.add("causality-banner-anim");
+
+      if (causalityTimer) clearTimeout(causalityTimer);
+      causalityTimer = setTimeout(function() {
+        banner.classList.add("hidden");
+        banner.classList.remove("causality-banner-anim");
+        if (novelView) novelView.classList.remove("causality-ripple-anim");
+      }, 3600);
+    }
+  }
+
+  function openTip(term, clickedEl) {
+    AudioEngine.play('tap');
+    lastClickedTipTarget = clickedEl || null;
+    var tip = (MASTER_DB.tips && MASTER_DB.tips[term]) || (typeof TIPS_MASTER !== "undefined" ? TIPS_MASTER[term] : null);
+    if (!tip) return;
+
+    // 既読・アンロック永続化（青 ➔ 黄への進化）
+    var state = TimelineState.getState();
+    if (!state.unlockedTips) state.unlockedTips = {};
+    if (!state.unlockedTips[term]) {
+      state.unlockedTips[term] = true;
+      TimelineState.saveLocal();
+      renderTimeBlockStatus();
+      if (term === "オーガスト卿") {
+        showToast("💡【TIPS解明】オーガスト卿（立憲主義と統治機構）をアーカイブに記録しました！");
+      }
+    }
+    // 本文内のアンカー色（青/黄/ピンク）を即座に更新
+    applyTipLinkStyles();
+
+    var termEl = document.getElementById("tipTermTitle");
+    if (termEl) termEl.textContent = tip.term;
+    var lawTextEl = document.getElementById("tipLawText");
+    if (lawTextEl) lawTextEl.textContent = tip.law;
+    var badgeEl = document.getElementById("tipCategoryBadge");
+    var isAugustSecret = (term === "オーガスト卿" && TimelineState.hasClearedTrueEnd());
+    if (badgeEl) {
+      var catName = isAugustSecret ? "🔴 赤字TIPS【極秘追想録】" :
+                    tip.category === "freedom" ? "自由権" :
+                    tip.category === "equality" ? "平等権" :
+                    tip.category === "social" ? "社会権" : "重要判例・統治機構";
+      badgeEl.textContent = catName;
+      if (isAugustSecret) {
+        badgeEl.className = "px-2 py-0.5 rounded text-[10px] font-bold border border-red-500 text-red-300 bg-red-950/80 shadow-[0_0_10px_rgba(239,68,68,0.5)]";
+      } else {
+        badgeEl.className = "px-2 py-0.5 rounded text-[10px] font-bold border border-sky-500/40 text-sky-300 bg-sky-950/40";
+      }
+    }
+    var descEl = document.getElementById("tipDescription");
+    if (descEl) {
+      descEl.classList.remove("tip-desc-highlight");
+      var parts = tip.desc.split("\n\n");
+      descEl.innerHTML = parts.map(function(p) {
+        var isAlert = p.indexOf("🔴") !== -1;
+        var borderStyle = isAlert ? "border-red-500/60 bg-red-950/40 text-red-200" : "border-neutral-800/80 bg-neutral-950/70 text-neutral-200";
+        return '<div class="p-3.5 rounded-xl border leading-relaxed text-xs sm:text-sm ' + borderStyle + '">' + p.replace(/\n/g, '<br>') + '</div>';
+      }).join("");
+
+      // ユーザー指示対応：1回クリア（ノーマルクリア等）で裏面史が開示され、真エンドへのモチベーションを高める！
+      if (term === "オーガスト卿") {
+        if (TimelineState.hasClearedOnce()) {
+          var secretBox = document.createElement("div");
+          secretBox.className = "p-3.5 rounded-xl border border-red-500/60 bg-red-950/40 text-red-200 leading-relaxed text-xs sm:text-sm mt-3 space-y-2";
+          secretBox.innerHTML = '<div class="font-bold text-red-400 flex items-center gap-1.5"><span>🔴</span><span>クリア後特典・統治機構の裏面史</span></div>' +
+            '<div>冷酷非道な独裁者の仮面の奥には、かつて平等を掲げ、三十年前の大破局の極限下で「全員を救おうとすれば全員が餓死する」という数理的絶望に直面した男の、身を切るような苦渋の選択が封印されていました。</div>' +
+            (TimelineState.hasClearedTrueEnd() ?
+              '<div class="text-xs text-amber-300 font-bold pt-1">★ 真エンディング達成により、オーガスト卿自身の手記（極秘追想録）が解放されました。</div>' :
+              '<div class="text-xs text-amber-400 font-bold pt-1">🗝️【真エンディングへの手引き】：10:30の時間軸に眠る3つの古遺物をすべて回収して真エンディングを達成すると、彼自身が真実の慟哭を綴った【極秘追想録（外伝シナリオ）】へジャンプできます！</div>');
+          descEl.appendChild(secretBox);
+        }
+
+        // 真エンドクリア済みの場合はJUMPボタンを追加
+        if (TimelineState.hasClearedTrueEnd()) {
+          var jumpBtn = document.createElement("button");
+          jumpBtn.className = "w-full mt-3 p-3.5 btn-secret-jump btn-canaan-jump rounded-xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-2xl transition-all";
+          jumpBtn.innerHTML = '<span class="text-base animate-pulse">🔴</span><span>【極秘追想録へJUMP】オーガスト卿の手記を読む ➔</span>';
+          jumpBtn.onclick = function() {
+            closeTip();
+            closeTipsArchive();
+            GameEngine.launchNode("SIDE_AUGUST");
+          };
+          descEl.appendChild(jumpBtn);
+        }
+      }
+    }
+
+    // 穴埋め選択式クイズの描画（2周目解放・シャッフル再挑戦）
+    renderTipQuiz(term);
+
+    var modal = document.getElementById("modalTip");
+    if (modal) modal.classList.remove("hidden");
+  }
+
+  // 穴埋めクイズのレンダリング
+  function renderTipQuiz(term) {
+    var quizSec = document.getElementById("tipQuizSection");
+    if (!quizSec) return;
+    quizSec.innerHTML = "";
+
+    // オーガスト卿専用：クイズではなく手記読了が修得条件（パターンA）
+    if (term === "オーガスト卿") {
+      var augustBox = document.createElement("div");
+      augustBox.className = "tip-quiz-box space-y-3";
+      var isAugustMastered = TimelineState.isTipMastered("オーガスト卿");
+      if (isAugustMastered) {
+        augustBox.innerHTML = 
+          '<div class="flex items-center justify-between gap-2 text-pink-400 font-bold text-xs sm:text-sm border-b border-pink-500/30 pb-2">' +
+            '<div class="flex items-center gap-1.5"><span>🌸</span><span>【極秘手記読了・完全修得済み（Mastered）】</span></div>' +
+            '<span class="text-[10px] px-2 py-0.5 rounded bg-pink-950/80 border border-pink-500 text-pink-300 font-mono">手記読了済</span>' +
+          '</div>' +
+          '<div class="text-xs sm:text-sm text-neutral-200 leading-relaxed pt-1">' +
+            'オーガスト卿の極秘手記『冷酷の仮面の奥で』を読了しました。冷酷な暴君の仮面の下で、全員餓死という絶滅から同胞を救うために耐え抜いた孤独なトリアージの慟哭と真実を完全修得しています。' +
+          '</div>';
+      } else {
+        augustBox.innerHTML = 
+          '<div class="flex items-center justify-between gap-2 text-amber-400 font-bold text-xs sm:text-sm border-b border-amber-500/30 pb-2">' +
+            '<div class="flex items-center gap-1.5"><span>📜</span><span>【オーガスト卿の修得条件】</span></div>' +
+            '<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950/80 border border-amber-500 text-amber-300 font-mono">手記読了で修得</span>' +
+          '</div>' +
+          '<p class="text-xs text-neutral-300 leading-relaxed pt-1">' +
+            'オーガスト卿には条文クイズはありません。真エンディング（13:00）達成後に解放される【極秘手記（シナリオ）】を最後まで読み届けることで、彼の魂を🌸完全修得（桜色）できます。' +
+          '</p>';
+      }
+      quizSec.appendChild(augustBox);
+      return;
+    }
+
+    var tip = (MASTER_DB.tips && MASTER_DB.tips[term]) || (typeof TIPS_MASTER !== "undefined" ? TIPS_MASTER[term] : null);
+    if (!tip || !tip.quiz) return;
+
+    var quiz = tip.quiz;
+    var isClearedOnce = TimelineState.hasClearedOnce();
+    var isMastered = TimelineState.isTipMastered(term);
+
+    var quizContainer = document.createElement("div");
+    quizContainer.className = "tip-quiz-box space-y-3";
+
+    if (!isClearedOnce) {
+      // 1周目：2周目クイズ解放の予告
+      quizContainer.innerHTML = 
+        '<div class="flex items-center gap-2 text-amber-400 font-bold text-xs sm:text-sm">' +
+          '<span>🔒</span><span>【憲法修得クイズ・予告】</span>' +
+        '</div>' +
+        '<p class="text-xs text-neutral-400 leading-relaxed">' +
+          '穴埋めクイズはゲームクリア後（2周目以降）に解放されます。正解するとTIPSがピンクに進化し、全条文クイズ制覇＆オーガスト卿の手記読了で特別外伝【俳優座談会】＆【世界観百科事典】が解禁されます！' +
+        '</p>';
+      quizSec.appendChild(quizContainer);
+      return;
+    }
+
+    if (isMastered) {
+      // 完全修得済み（Mastered）
+      quizContainer.innerHTML = 
+        '<div class="flex items-center justify-between gap-2 text-pink-400 font-bold text-xs sm:text-sm border-b border-pink-500/30 pb-2">' +
+          '<div class="flex items-center gap-1.5"><span>🌸</span><span>【完全修得済み（Mastered）】</span></div>' +
+          '<span class="text-[10px] px-2 py-0.5 rounded bg-pink-950/80 border border-pink-500 text-pink-300 font-mono">正解済</span>' +
+        '</div>' +
+        '<div class="text-xs sm:text-sm text-neutral-200 font-bold leading-relaxed">' + quiz.question + '</div>' +
+        '<div class="p-3 rounded-xl bg-pink-950/40 border border-pink-500/50 text-xs sm:text-sm text-pink-200 font-bold">' +
+          '✅ 正解：' + quiz.choices[quiz.correctIndex] +
+        '</div>' +
+        (quiz.explanation ? '<p class="text-xs text-neutral-400 leading-relaxed">' + quiz.explanation + '</p>' : '');
+      quizSec.appendChild(quizContainer);
+      return;
+    }
+
+    // 2周目・未正解：クイズ出題（選択肢シャッフル）
+    renderQuizQuestion(quizContainer, term, quiz);
+    quizSec.appendChild(quizContainer);
+  }
+
+  // クイズ問題文およびシャッフル選択肢の描画
+  function renderQuizQuestion(container, term, quiz) {
+    container.innerHTML = "";
+
+    var header = document.createElement("div");
+    header.className = "flex items-center justify-between gap-2 text-amber-400 font-bold text-xs sm:text-sm border-b border-amber-500/30 pb-2";
+    header.innerHTML = '<div class="flex items-center gap-1.5"><span>📝</span><span>【憲法修得 穴埋めクイズ】</span></div>' +
+                       '<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950/80 border border-amber-500 text-amber-300 font-mono">2周目挑戦中</span>';
+    container.appendChild(header);
+
+    var qText = document.createElement("div");
+    qText.className = "text-xs sm:text-sm text-neutral-200 font-bold leading-relaxed pt-1";
+    qText.textContent = quiz.question;
+    container.appendChild(qText);
+
+    // 選択肢のシャッフル（Fisher-Yates）
+    var choiceObjs = quiz.choices.map(function(cText, idx) {
+      return { text: cText, isCorrect: (idx === quiz.correctIndex) };
+    });
+    for (var i = choiceObjs.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var temp = choiceObjs[i];
+      choiceObjs[i] = choiceObjs[j];
+      choiceObjs[j] = temp;
+    }
+
+    var choicesList = document.createElement("div");
+    choicesList.className = "space-y-2 pt-1";
+
+    choiceObjs.forEach(function(item, cIdx) {
+      var btn = document.createElement("button");
+      btn.className = "tip-quiz-choice-btn";
+      btn.innerHTML = '<span class="w-5 h-5 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] font-mono text-neutral-400">' + (cIdx + 1) + '</span>' +
+                      '<span>' + item.text + '</span>';
+
+      btn.onclick = function() {
+        var allBtns = choicesList.querySelectorAll("button");
+        allBtns.forEach(function(b) { b.disabled = true; });
+
+        if (item.isCorrect) {
+          AudioEngine.play('sparkle');
+          btn.classList.add("correct-choice");
+          TimelineState.markTipMastered(term);
+          applyTipLinkStyles(); // 本文の即時ピンク化
+
+          var resultBox = document.createElement("div");
+          resultBox.className = "p-3 rounded-xl bg-pink-950/40 border border-pink-500/60 text-xs sm:text-sm text-pink-200 space-y-2 mt-3 animate-fade-in";
+          resultBox.innerHTML = '<div class="font-bold text-pink-300 flex items-center gap-1.5"><span>🌸</span><span>正解！ 憲法条文の知恵を完全修得しました！</span></div>' +
+                                '<p class="text-neutral-300">' + (quiz.explanation || '') + '</p>';
+          container.appendChild(resultBox);
+
+          if (TimelineState.hasMasteredAllTips()) {
+            var allMasterBox = document.createElement("div");
+            allMasterBox.className = "p-3.5 rounded-xl border-2 border-amber-500 bg-gradient-to-r from-amber-950/80 to-neutral-900 text-amber-200 space-y-1.5 mt-3 shadow-2xl";
+            allMasterBox.innerHTML = '<div class="font-black text-amber-300 text-sm flex items-center gap-2"><span>🌟</span><span>【全TIPS完全修得達成！！】</span></div>' +
+                                      '<div class="text-xs leading-relaxed">全ての憲法条文・知恵の穴埋めクイズを完全制覇しました！ 判例図鑑アーカイブにて特別ボーナス【俳優たちの座談会ノベル】＆【ネオ・ジャパニア百科事典】が解禁されました！</div>';
+            container.appendChild(allMasterBox);
+          }
+        } else {
+          AudioEngine.play('thunder');
+          btn.classList.add("wrong-choice");
+
+          var descContainer = document.getElementById("tipDescription");
+          if (descContainer) {
+            descContainer.classList.add("tip-desc-highlight");
+          }
+
+          var wrongBox = document.createElement("div");
+          wrongBox.className = "p-3 rounded-xl bg-red-950/40 border border-red-500/60 text-xs sm:text-sm text-red-200 space-y-2 mt-3 animate-fade-in";
+          wrongBox.innerHTML = '<div class="font-bold text-red-300 flex items-center gap-1.5"><span>❌</span><span>不正解！ 上の解説文をもう一度読み直そう</span></div>' +
+                               '<p class="text-neutral-400 text-xs">解説文の中に正解のヒントが書かれています。読み直したら、再挑戦ボタンを押してください。</p>';
+
+          var retryBtn = document.createElement("button");
+          retryBtn.className = "w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-neutral-950 font-black text-xs transition-all shadow-md cursor-pointer flex items-center justify-center gap-2";
+          retryBtn.innerHTML = '<span>🔄</span><span>解説を読み直して再挑戦（選択肢をシャッフル）</span>';
+          retryBtn.onclick = function() {
+            AudioEngine.play('tap');
+            if (descContainer) {
+              descContainer.classList.remove("tip-desc-highlight");
+            }
+            renderQuizQuestion(container, term, quiz);
+          };
+          wrongBox.appendChild(retryBtn);
+          container.appendChild(wrongBox);
+        }
+      };
+
+      choicesList.appendChild(btn);
+    });
+
+    container.appendChild(choicesList);
+  }
+
+  // 本文中のTIPSアンカー色（未読:青 / 既読:黄 / 正解:ピンク / オーガスト赤）の一括適用
+  function applyTipLinkStyles(container) {
+    var root = container || document.getElementById("paragraphsList");
+    if (!root) return;
+    var links = root.querySelectorAll(".tip-link");
+    var state = TimelineState.getState();
+    var isTrueCleared = TimelineState.hasClearedTrueEnd();
+
+    for (var i = 0; i < links.length; i++) {
+      var el = links[i];
+      var term = el.getAttribute("data-tip");
+      if (!term) continue;
+
+      if (isTrueCleared && term === "オーガスト卿") {
+        el.classList.remove("tip-yellow", "tip-pink");
+        el.classList.add("tip-link-red");
+      } else if (TimelineState.isTipMastered(term)) {
+        el.classList.remove("tip-yellow", "tip-link-red");
+        el.classList.add("tip-pink");
+      } else if (state.unlockedTips && state.unlockedTips[term]) {
+        el.classList.remove("tip-pink", "tip-link-red");
+        el.classList.add("tip-yellow");
+      } else {
+        el.classList.remove("tip-yellow", "tip-pink", "tip-link-red");
+      }
+    }
+  }
+
+  function closeTip() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalTip");
+    if (modal) modal.classList.add("hidden");
+    tipCooldownUntil = Date.now() + 350; // 350msのタップ貫通ガード
+
+    // ハイライトのリセット
+    var descContainer = document.getElementById("tipDescription");
+    if (descContainer) {
+      descContainer.classList.remove("tip-desc-highlight");
+    }
+
+    if (lastClickedTipTarget) {
+      try {
+        lastClickedTipTarget.classList.remove("tip-link-focused");
+        void lastClickedTipTarget.offsetWidth; // リフロー強制でアニメーション再起動
+        lastClickedTipTarget.classList.add("tip-link-focused");
+      } catch (e) {}
+      lastClickedTipTarget = null;
+    }
+  }
+
+  function isTipCooldown() {
+    return Date.now() < tipCooldownUntil;
+  }
+
+  function openWikiArchive() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalWikiArchive");
+    if (modal) modal.classList.remove("hidden");
+  }
+
+  function closeWikiArchive() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalWikiArchive");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function openTipsArchive() {
+    AudioEngine.play('tap');
+    renderTipsArchiveModal('all');
+    var modal = document.getElementById("modalTipsArchive");
+    if (modal) modal.classList.remove("hidden");
+  }
+
+  function closeTipsArchive() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalTipsArchive");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function renderTipsArchiveModal(filterCategory, searchQuery) {
+    var state = TimelineState.getState();
+    var tipsDb = (typeof TIPS_MASTER !== "undefined") ? TIPS_MASTER : (MASTER_DB.tips || {});
+    var allKeys = Object.keys(tipsDb);
+    var unlockedKeys = Object.keys(state.unlockedTips || {});
+    var masteredCount = allKeys.filter(function(k) { return TimelineState.isTipMastered(k); }).length;
+    var isAllMastered = TimelineState.hasMasteredAllTips();
+    var isTalkCompleted = (state.visitedNodes.indexOf("TALK_FIN") !== -1);
+
+    var unlockedCountEl = document.getElementById("archiveUnlockedCount");
+    if (unlockedCountEl) unlockedCountEl.textContent = unlockedKeys.length;
+    var totalCountEl = document.getElementById("archiveTotalCount");
+    if (totalCountEl) totalCountEl.textContent = allKeys.length;
+
+    // 全TIPS解明時：検定クイズ挑戦バナーの表示制御
+    var quizBanner = document.getElementById("bannerTipsQuizChallenge");
+    if (quizBanner) {
+      if (unlockedKeys.length >= allKeys.length && allKeys.length > 0) {
+        quizBanner.classList.remove("hidden");
+        var btnStart = document.getElementById("btnStartTipsQuiz");
+        if (btnStart) {
+          btnStart.onclick = function() {
+            closeTipsArchive();
+            QuizController.startQuiz();
+          };
+        }
+      } else {
+        quizBanner.classList.add("hidden");
+      }
+    }
+
+    var grid = document.getElementById("archiveCardsGrid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    // TIPSクイズ修得プログレスバナー（座談会＆事典アンロック導線）
+    var progressBanner = document.createElement("div");
+    progressBanner.className = "col-span-full p-3 sm:p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 " +
+      (isAllMastered ? "border-pink-500/80 bg-gradient-to-r from-pink-950/60 to-neutral-900 shadow-[0_0_15px_rgba(236,72,153,0.25)]"
+                     : "border-sky-800/80 bg-gradient-to-r from-sky-950/40 via-neutral-900 to-neutral-950");
+    progressBanner.innerHTML =
+      '<div class="space-y-1">' +
+        '<div class="flex items-center gap-2">' +
+          '<span class="text-xs font-mono font-bold px-2 py-0.5 rounded border ' + (isAllMastered ? "text-pink-300 border-pink-500 bg-pink-950" : "text-sky-300 border-sky-600 bg-sky-950") + '">' +
+            (isAllMastered ? '🌸 TIPS完全修得達成' : '📘 TIPS修得状況') +
+          '</span>' +
+          '<span class="text-xs font-mono font-bold ' + (isAllMastered ? "text-pink-400" : "text-sky-400") + '">' +
+            masteredCount + ' / ' + allKeys.length + ' 修得（' + Math.round((masteredCount / (allKeys.length || 1)) * 100) + '%）' +
+          '</span>' +
+        '</div>' +
+        '<p class="text-[11px] text-neutral-300 leading-relaxed font-sans-jp">' +
+          (isAllMastered
+            ? '全18条文クイズ正解 ＆ オーガスト卿の極秘手記読了を達成し、一覧がすべて桜色（ピンク）に到達しました！ 下記に【俳優たちの座談会】＆【ネオ・ジャパニア百科事典】がアンロックされています。'
+            : '本編でTIPSを読んで解明（青色）し、2周目以降のクイズ正解 ＆ オーガスト卿の手記読了で桜色（ピンク）に進化させましょう。すべて桜色になると【俳優たちの座談会（ノベル）】＆【世界観裏設定事典（Wikipedia風）】がアンロックされます！') +
+        '</p>' +
+      '</div>' +
+      '<div class="w-full sm:w-48 shrink-0 bg-neutral-800 rounded-full h-2.5 overflow-hidden border border-neutral-700">' +
+        '<div class="h-full rounded-full transition-all duration-500 ' + (isAllMastered ? "bg-pink-400" : "bg-sky-400") + '" style="width: ' + Math.min(100, Math.round((masteredCount / (allKeys.length || 1)) * 100)) + '%"></div>' +
+      '</div>';
+    grid.appendChild(progressBanner);
+
+    // 【TIPS全問正解（全桜色）特典①：俳優たちの座談会（ノベル形式）】
+    if (isAllMastered && (!filterCategory || filterCategory === "all") && !searchQuery) {
+      var talkCard = document.createElement("div");
+      talkCard.className = "archive-card p-4 sm:p-5 rounded-2xl flex flex-col justify-between transition-all border-2 border-pink-500 bg-gradient-to-br from-pink-950/60 via-neutral-900 to-neutral-950 shadow-[0_0_20px_rgba(236,72,153,0.25)] col-span-full sm:col-span-1";
+      talkCard.innerHTML = '<div>' +
+        '<div class="flex items-center justify-between gap-1 mb-2">' +
+          '<span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full border text-pink-300 border-pink-500 bg-pink-950/90 font-bold flex items-center gap-1"><span>🎭</span><span>豪華解禁【TIPS全問正解特典】</span></span>' +
+          '<span class="text-[11px] text-pink-400 font-mono font-bold">' + (isTalkCompleted ? '✓ 読了済' : '★ 未読了') + '</span>' +
+        '</div>' +
+        '<h4 class="text-base font-black text-pink-200 font-hud">特別編：俳優座談会 〜失われた人権の舞台裏〜</h4>' +
+        '<p class="text-xs text-neutral-300 mt-2 leading-relaxed font-sans-jp">レン、エレナ、ダニエル、シン、オーガスト卿を演じた俳優5名がクランクアップ後に集結！ 過酷な撮影秘話、BAD ENDの苦労、公民ガチ勉強談義をノベル形式でお届け。</p>' +
+        '</div>' +
+        '<div class="mt-4 pt-3 border-t border-pink-900/60 flex justify-between items-center">' +
+          '<span class="text-xs text-pink-400 font-mono font-bold">SPECIAL TALK</span>' +
+          '<button class="btn-play-talk px-4 py-2 bg-gradient-to-r from-pink-500 to-pink-400 hover:from-pink-400 hover:to-pink-300 text-neutral-950 text-xs font-black rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer font-hud">座談会ノベルを読む ➔</button>' +
+        '</div>';
+      var btnTalk = talkCard.querySelector(".btn-play-talk");
+      if (btnTalk) {
+        btnTalk.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('jump');
+          closeTipsArchive();
+          GameEngine.launchNode("TALK_01");
+        };
+      }
+      grid.appendChild(talkCard);
+
+      // 【TIPS全問正解（全桜色）特典②：世界観裏設定コンプリート事典（Wikipedia風）】
+      var wikiCard = document.createElement("div");
+      wikiCard.className = "archive-card p-4 sm:p-5 rounded-2xl flex flex-col justify-between transition-all border-2 border-sky-500 bg-gradient-to-br from-sky-950/60 via-neutral-900 to-neutral-950 shadow-[0_0_20px_rgba(56,189,248,0.25)] col-span-full sm:col-span-1";
+      wikiCard.innerHTML = '<div>' +
+        '<div class="flex items-center justify-between gap-1 mb-2">' +
+          '<span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full border text-sky-300 border-sky-500 bg-sky-950/90 font-bold flex items-center gap-1"><span>📖</span><span>公式秘話【Wikipedia風百科事典】</span></span>' +
+          '<span class="text-[11px] text-sky-400 font-mono font-bold">★ 閲覧可能</span>' +
+        '</div>' +
+        '<h4 class="text-base font-black text-sky-200 font-hud">ネオ・ジャパニア百科事典 (裏設定アーカイブ)</h4>' +
+        '<p class="text-xs text-neutral-300 mt-2 leading-relaxed font-sans-jp">緊急事態宣言の恒久化、高低差343mの都市構造諸元、首輪とヘルメスAI、シン・マーサ・ゴードン・エマの未公開人物相関秘話をWikipedia風UIで完全網羅。</p>' +
+        '</div>' +
+        '<div class="mt-4 pt-3 border-t border-sky-900/60 flex justify-between items-center">' +
+          '<span class="text-xs text-sky-400 font-mono font-bold">WIKI ARCHIVE</span>' +
+          '<button class="btn-open-wiki px-4 py-2 bg-gradient-to-r from-sky-500 to-sky-400 hover:from-sky-400 hover:to-sky-300 text-neutral-950 text-xs font-black rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer font-hud">百科事典を開く ➔</button>' +
+        '</div>';
+      var btnWiki = wikiCard.querySelector(".btn-open-wiki");
+      if (btnWiki) {
+        btnWiki.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('tap');
+          openWikiArchive();
+        };
+      }
+      grid.appendChild(wikiCard);
+    }
+
+    var q = (searchQuery || "").toLowerCase();
+    var filteredKeys = allKeys.filter(function(k) {
+      if (filterCategory && filterCategory !== "all") {
+        if (tipsDb[k].category !== filterCategory) return false;
+      }
+      if (q) {
+        var matchTerm = (tipsDb[k].term || "").toLowerCase().indexOf(q) !== -1;
+        var matchLaw = (tipsDb[k].law || "").toLowerCase().indexOf(q) !== -1;
+        var matchDesc = (tipsDb[k].desc || "").toLowerCase().indexOf(q) !== -1;
+        var matchKey = k.toLowerCase().indexOf(q) !== -1;
+        if (!matchTerm && !matchLaw && !matchDesc && !matchKey) return false;
+      }
+      return true;
+    });
+
+    if (filteredKeys.length === 0) {
+      var emptyEl = document.createElement("div");
+      emptyEl.className = "col-span-full text-center py-12 text-neutral-400 font-hud text-xs space-y-1.5";
+      emptyEl.innerHTML = '<div class="text-2xl">🔍</div><div>「' + (searchQuery || "") + '」に一致する憲法条文・判例は見つかりませんでした。</div>';
+      grid.appendChild(emptyEl);
+      return;
+    }
+
+    filteredKeys.forEach(function(k) {
+      var tip = tipsDb[k];
+      var isUnlocked = (unlockedKeys.indexOf(k) !== -1);
+      var isMastered = TimelineState.isTipMastered(k);
+      var isAugustCanaan = (k === "オーガスト卿" && TimelineState.hasClearedTrueEnd());
+
+      var card = document.createElement("div");
+      if (isAugustCanaan) {
+        card.className = "archive-card p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between cursor-pointer border border-red-500/80 bg-red-950/30 shadow-[0_0_15px_rgba(239,68,68,0.25)]";
+      } else if (isMastered) {
+        // クイズ正解：桜色（ネオン桜ピンク・Mastered）
+        card.className = "archive-card p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between cursor-pointer border border-pink-500/80 bg-pink-950/30 hover:border-pink-400 shadow-[0_0_12px_rgba(236,72,153,0.2)] mastered-pink";
+      } else if (isUnlocked) {
+        // 読了：青（シアン）
+        card.className = "archive-card p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between cursor-pointer border border-sky-500/70 bg-sky-950/30 hover:border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.2)] read-blue";
+      } else {
+        // 未読：ロック
+        card.className = "archive-card p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between border border-neutral-800 bg-neutral-950/40 opacity-70 locked";
+      }
+
+      var catName = isAugustCanaan ? "🔴 赤字TIPS【追想録】" :
+                    tip.category === "freedom" ? "自由権" :
+                    tip.category === "equality" ? "平等権" :
+                    tip.category === "social" ? "社会権" : "重要判例";
+      var catBadgeColor = isAugustCanaan ? "text-red-400 border-red-700 bg-red-950/80 shadow-sm" :
+                          tip.category === "freedom" ? "text-emerald-400 border-emerald-800 bg-emerald-950/60" :
+                          tip.category === "equality" ? "text-sky-400 border-sky-800 bg-sky-950/60" :
+                          tip.category === "social" ? "text-amber-400 border-amber-800 bg-amber-950/60" :
+                          "text-purple-400 border-purple-800 bg-purple-950/60";
+
+      if (isAugustCanaan) {
+        card.innerHTML = '<div>' +
+          '<div class="flex items-center justify-between gap-1 mb-1.5">' +
+            '<span class="text-[9px] font-mono px-2 py-0.5 rounded border ' + catBadgeColor + '">' + catName + '</span>' +
+            '<span class="text-[10px] text-red-400 font-bold font-mono">★ 外伝解禁</span>' +
+          '</div>' +
+          '<h4 class="text-xs sm:text-sm font-black text-red-200 font-hud line-clamp-1">' + tip.term + '</h4>' +
+          '<div class="text-[10px] text-red-400 font-mono mt-0.5 line-clamp-1">' + tip.law + '</div>' +
+          '<p class="text-[11px] text-neutral-300 mt-2 line-clamp-2 leading-relaxed font-sans-jp">' + (tip.desc.split("\n\n")[0] || "") + '</p>' +
+          '</div>' +
+          '<div class="mt-3 pt-2 border-t border-red-900/60 flex items-center justify-between gap-2">' +
+            '<button class="btn-august-tip text-[10px] text-red-300 hover:text-white px-2 py-1 rounded bg-red-950/80 border border-red-800/80 font-bold cursor-pointer">📜 解説を見る</button>' +
+            '<button class="btn-august-jump text-[10px] text-white px-3 py-1 rounded-lg bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 font-black shadow-md flex items-center gap-1 cursor-pointer"><span>手記を読む</span><span>▶</span></button>' +
+          '</div>';
+        
+        var btnJump = card.querySelector(".btn-august-jump");
+        if (btnJump) {
+          btnJump.onclick = function(e) {
+            e.stopPropagation();
+            AudioEngine.play('jump');
+            closeTipsArchive();
+            GameEngine.launchNode("SIDE_AUGUST");
+          };
+        }
+        var btnTip = card.querySelector(".btn-august-tip");
+        if (btnTip) {
+          btnTip.onclick = function(e) {
+            e.stopPropagation();
+            openTip(k);
+          };
+        }
+        card.onclick = function() { openTip(k); };
+      } else if (isMastered) {
+        // 桜色カード：🌸 修得済
+        card.innerHTML = '<div>' +
+          '<div class="flex items-center justify-between gap-1 mb-1.5">' +
+            '<span class="text-[9px] font-mono px-2 py-0.5 rounded border ' + catBadgeColor + '">' + catName + '</span>' +
+            '<span class="text-[10px] text-pink-400 font-bold font-mono">🌸 修得済</span>' +
+          '</div>' +
+          '<h4 class="text-xs sm:text-sm font-black text-pink-200 font-hud line-clamp-1">' + tip.term + '</h4>' +
+          '<div class="text-[10px] text-pink-400 font-mono mt-0.5 line-clamp-1">' + tip.law + '</div>' +
+          '<p class="text-[11px] text-neutral-300 mt-2 line-clamp-2 leading-relaxed font-sans-jp">' + (tip.desc.split("\n\n")[0] || "") + '</p>' +
+          '</div>' +
+          '<div class="mt-3 pt-2 border-t border-pink-900/60 text-right">' +
+            '<span class="text-[10px] text-pink-400 font-bold hover:underline">' + ((k === "オーガスト卿") ? "極秘手記・条文確認 ▶" : "条文とクイズ復習 ▶") + '</span>' +
+          '</div>';
+        card.onclick = function() { openTip(k); };
+      } else if (isUnlocked) {
+        // 青色カード：✓ 解明済
+        var unlockActionText = (k === "オーガスト卿") ? "条文確認・裏面史予告 ▶" : "条文確認・クイズ挑戦 ▶";
+        card.innerHTML = '<div>' +
+          '<div class="flex items-center justify-between gap-1 mb-1.5">' +
+            '<span class="text-[9px] font-mono px-2 py-0.5 rounded border ' + catBadgeColor + '">' + catName + '</span>' +
+            '<span class="text-[10px] text-sky-400 font-mono">✓ 解明済</span>' +
+          '</div>' +
+          '<h4 class="text-xs sm:text-sm font-bold text-sky-100 font-hud line-clamp-1">' + tip.term + '</h4>' +
+          '<div class="text-[10px] text-sky-400 font-mono mt-0.5 line-clamp-1">' + tip.law + '</div>' +
+          '<p class="text-[11px] text-neutral-400 mt-2 line-clamp-2 leading-relaxed font-sans-jp">' + (tip.desc.split("\n\n")[0] || "") + '</p>' +
+          '</div>' +
+          '<div class="mt-3 pt-2 border-t border-sky-950 text-right">' +
+            '<span class="text-[10px] text-sky-400 font-bold hover:underline">' + unlockActionText + '</span>' +
+          '</div>';
+        card.onclick = function() { openTip(k); };
+      } else {
+        // 未読カード：🔒 未解明
+        var lockedDescText = (k === "オーガスト卿") ?
+          "エレナ編冒頭や中央タワー最上階で青く光るアンカーを調査すると、オーガスト卿の統治と立憲主義の知恵が永久保存されます。" :
+          "ストーリー内で青く光るTIPSアンカーを調査すると、憲法条文と判例の知恵が永久保存されます。";
+        card.innerHTML = '<div>' +
+          '<div class="flex items-center justify-between gap-1 mb-1.5">' +
+            '<span class="text-[9px] font-mono px-2 py-0.5 rounded border ' + catBadgeColor + '">' + catName + '</span>' +
+            '<span class="text-[10px] text-neutral-500 font-mono">🔒 未解明</span>' +
+          '</div>' +
+          '<h4 class="text-xs sm:text-sm font-bold text-neutral-400 font-hud line-clamp-1">' + tip.term + '</h4>' +
+          '<div class="text-[10px] text-neutral-500 font-mono mt-0.5 line-clamp-1">' + tip.law + '</div>' +
+          '<p class="text-[11px] text-neutral-500 mt-2 line-clamp-2 leading-relaxed font-sans-jp">' + lockedDescText + '</p>' +
+          '</div>' +
+          '<div class="mt-3 pt-2 border-t border-neutral-800/40 text-right">' +
+            '<span class="text-[10px] text-neutral-500 font-mono">シナリオを探索せよ</span>' +
+          '</div>';
+      }
+
+      grid.appendChild(card);
+    });
+  }
+
+  function openBadEndArchive() {
+    AudioEngine.play('tap');
+    renderBadEndArchiveModal('all');
+    var modal = document.getElementById("modalBadEndArchive");
+    if (modal) modal.classList.remove("hidden");
+  }
+
+  function closeBadEndArchive() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalBadEndArchive");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function renderBadEndArchiveModal(filterCategory, searchQuery) {
+    var state = TimelineState.getState();
+    var nodes = (typeof MASTER_DB !== "undefined" && MASTER_DB.nodes) ? MASTER_DB.nodes : {};
+
+    var badEndKeys = [];
+    for (var i = 1; i <= 26; i++) {
+      badEndKeys.push("BAD_" + (i < 10 ? "0" + i : i));
+    }
+
+    var unlockedBadEnds = Object.keys(state.unlockedEndings || {}).filter(function(k) {
+      return k.indexOf("BAD_") === 0 && state.unlockedEndings[k];
+    });
+
+    var countEl = document.getElementById("badEndArchiveUnlockedCount");
+    if (countEl) countEl.textContent = unlockedBadEnds.length;
+    var headerCountEl = document.getElementById("headerBadEndCount");
+    if (headerCountEl) headerCountEl.textContent = unlockedBadEnds.length;
+    var bannerCountEl = document.getElementById("bannerBadEndCount");
+    if (bannerCountEl) bannerCountEl.textContent = unlockedBadEnds.length;
+
+    var grid = document.getElementById("badEndCardsGrid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    var q = (searchQuery || "").toLowerCase();
+    var filteredKeys = badEndKeys.filter(function(k) {
+      var n = nodes[k];
+      if (!n) return false;
+
+      if (filterCategory && filterCategory !== "all") {
+        if (filterCategory === "A" && ["BAD_02", "BAD_05", "BAD_11", "BAD_12", "BAD_14", "BAD_17", "BAD_19"].indexOf(k) === -1) return false;
+        if (filterCategory === "B" && ["BAD_04", "BAD_10", "BAD_15", "BAD_18"].indexOf(k) === -1) return false;
+        if (filterCategory === "C" && ["BAD_01", "BAD_03", "BAD_13", "BAD_16"].indexOf(k) === -1) return false;
+        if (filterCategory === "ALL" && ["BAD_06", "BAD_07", "BAD_08", "BAD_09", "BAD_20", "BAD_21", "BAD_22", "BAD_23", "BAD_24", "BAD_25", "BAD_26"].indexOf(k) === -1) return false;
+      }
+
+      if (q) {
+        var matchTitle = (n.title || "").toLowerCase().indexOf(q) !== -1;
+        var matchDesc = (n.desc || "").toLowerCase().indexOf(q) !== -1;
+        var matchHint = (n.hint || "").toLowerCase().indexOf(q) !== -1;
+        var matchNo = (n.badNumber || "").toLowerCase().indexOf(q) !== -1;
+        var matchKey = k.toLowerCase().indexOf(q) !== -1;
+        if (!matchTitle && !matchDesc && !matchHint && !matchNo && !matchKey) return false;
+      }
+      return true;
+    });
+
+    if (filteredKeys.length === 0) {
+      var emptyEl = document.createElement("div");
+      emptyEl.className = "col-span-full text-center py-12 text-neutral-400 font-hud text-xs space-y-1.5";
+      emptyEl.innerHTML = '<div class="text-2xl">💀</div><div>「' + (searchQuery || "") + '」に一致する結末は見つかりませんでした。</div>';
+      grid.appendChild(emptyEl);
+      return;
+    }
+    // 全BAD END（26件）解明時、またはシン読了時・トロフィー保有時に特別カードを表示
+    var isShinUnlocked = (unlockedBadEnds.length >= 26 || (state.trophies && state.trophies.shinMaster) || state.visitedNodes.indexOf("SHIN_01_MEMORY") !== -1);
+    var isShinCompleted = (state.visitedNodes.indexOf("SHIN_06_PROLOGUE_LOOP") !== -1);
+
+    if (isShinUnlocked && (!filterCategory || filterCategory === "all") && !q) {
+      var shinImgUrl = (typeof CHARACTER_IMAGES !== "undefined" && CHARACTER_IMAGES.SHIN)
+        ? CHARACTER_IMAGES.SHIN
+        : "assets/raw_sources/shin_portrait_opt.jpg";
+      var shinCard = document.createElement("div");
+      shinCard.className = "archive-card p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between transition-all border-2 border-amber-500/80 bg-gradient-to-br from-amber-950/60 via-neutral-900 to-neutral-950 shadow-[0_0_25px_rgba(245,158,11,0.3)] col-span-full sm:col-span-2 group";
+      shinCard.innerHTML = '<div class="flex flex-col sm:flex-row items-center sm:items-start gap-4">' +
+        '<div class="relative shrink-0">' +
+          '<img src="' + shinImgUrl + '" alt="シン" class="w-20 h-24 sm:w-24 sm:h-28 rounded-xl object-cover border-2 border-amber-400/80 shadow-2xl group-hover:scale-[1.03] transition-transform duration-300">' +
+          '<span class="absolute bottom-1 right-1 bg-amber-950/95 text-amber-300 text-[8px] sm:text-[9px] font-tech font-black px-1.5 py-0.5 rounded border border-amber-500/50">HERO</span>' +
+        '</div>' +
+        '<div class="space-y-1.5 flex-1 min-w-0 text-left w-full">' +
+          '<div class="flex flex-wrap items-center justify-between gap-1 mb-1">' +
+            '<span class="text-[9px] font-mono px-2 py-0.5 rounded border text-amber-300 border-amber-500/80 bg-amber-950/90 font-bold">🕊️ 奇跡解禁【全BAD END踏破特典】</span>' +
+            '<span class="text-[10px] text-amber-400 font-mono font-bold">' + (isShinCompleted ? '✓ 読了済' : '★ 未読了') + '</span>' +
+          '</div>' +
+          '<h4 class="text-sm sm:text-base font-black text-amber-200 font-hud">外伝：雨の日の約束 〜シンの見た青空〜</h4>' +
+          '<div class="quote-box text-amber-300/90 text-[11px] font-story leading-snug">「人間はな、分け合って食うもんだ。オレたちの首には鉄の輪が嵌ってるが、心まで繋がれちゃいないよな」</div>' +
+          '<p class="text-[11px] text-neutral-300 leading-relaxed pt-1">全26通りの絶望を踏破した者だけに明かされる始まりの真実。親友レンを生かすため自ら犠牲となった英雄シンの記憶。</p>' +
+        '</div>' +
+        '</div>' +
+        '<div class="mt-3 pt-2.5 border-t border-amber-900/60 flex flex-wrap gap-2 justify-between items-center w-full">' +
+          '<span class="text-[10px] text-amber-500/80 font-mono font-bold">EPISODE: SHIN / 憲法第26条（教育を受ける権利）</span>' +
+          '<button class="btn-play-shin px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 text-xs font-black rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer font-hud">特別エピソードを開始する ➔</button>' +
+        '</div>';
+      var btnShin = shinCard.querySelector(".btn-play-shin");
+      if (btnShin) {
+        btnShin.onclick = function(e) {
+          e.stopPropagation();
+          AudioEngine.play('jump');
+          closeBadEndArchive();
+          GameEngine.launchNode("SHIN_01_MEMORY");
+        };
+      }
+      grid.appendChild(shinCard);
+    }
+
+    filteredKeys.forEach(function(k) {
+      var n = nodes[k];
+      var isUnlocked = (unlockedBadEnds.indexOf(k) !== -1);
+      var isClimaxBad = (["BAD_06", "BAD_07", "BAD_08", "BAD_09", "BAD_24", "BAD_25", "BAD_26"].indexOf(k) !== -1);
+
+      // クライマックスBAD ENDにおける「RED（Ren, Elena, Daniel）」3者視点観測の判定
+      var hasR = false, hasE = false, hasD = false;
+      var isRedComplete = false;
+      var redCount = 0;
+
+      if (isClimaxBad) {
+        var visited = state.visitedNodes || [];
+        var witnesses = (state.badEndWitnesses && state.badEndWitnesses[k]) ? state.badEndWitnesses[k] : {};
+
+        hasR = Boolean(witnesses["A"] || witnesses["R"] ||
+          (k === "BAD_06" && visited.indexOf("BAD_REN_RETREAT") !== -1) ||
+          (k === "BAD_07" && visited.indexOf("BAD_REN_ELENA_FAILED") !== -1) ||
+          (k === "BAD_08" && visited.indexOf("BAD_REN_DANIEL_FAILED") !== -1) ||
+          (k === "BAD_24" && visited.indexOf("BAD_REN_ALONE_FAILED") !== -1) ||
+          (k === "BAD_25" && visited.indexOf("BAD_REN_BLAME_DANIEL") !== -1) ||
+          (k === "BAD_26" && visited.indexOf("BAD_REN_BLAME_ELENA") !== -1) ||
+          (k === "BAD_09" && visited.indexOf("BAD_REN_TIMEOUT") !== -1)
+        );
+
+        hasE = Boolean(witnesses["B"] || witnesses["E"] ||
+          (k === "BAD_06" && visited.indexOf("BAD_ELENA_REN_FAILED") !== -1) ||
+          (k === "BAD_07" && visited.indexOf("BAD_ELENA_RETREAT") !== -1) ||
+          (k === "BAD_08" && visited.indexOf("BAD_ELENA_DANIEL_FAILED") !== -1) ||
+          (k === "BAD_24" && visited.indexOf("BAD_ELENA_BLAME_DANIEL") !== -1) ||
+          (k === "BAD_25" && visited.indexOf("BAD_ELENA_ALONE_FAILED") !== -1) ||
+          (k === "BAD_26" && visited.indexOf("BAD_ELENA_BLAME_REN") !== -1) ||
+          (k === "BAD_09" && visited.indexOf("BAD_ELENA_TIMEOUT") !== -1)
+        );
+
+        hasD = Boolean(witnesses["C"] || witnesses["D"] ||
+          (k === "BAD_06" && visited.indexOf("BAD_DANIEL_REN_FAILED") !== -1) ||
+          (k === "BAD_07" && visited.indexOf("BAD_DANIEL_ELENA_FAILED") !== -1) ||
+          (k === "BAD_08" && visited.indexOf("BAD_DANIEL_RETREAT") !== -1) ||
+          (k === "BAD_24" && visited.indexOf("BAD_DANIEL_BLAME_ELENA") !== -1) ||
+          (k === "BAD_25" && visited.indexOf("BAD_DANIEL_BLAME_REN") !== -1) ||
+          (k === "BAD_26" && visited.indexOf("BAD_DANIEL_ALONE_FAILED") !== -1) ||
+          (k === "BAD_09" && visited.indexOf("BAD_DANIEL_TIMEOUT") !== -1)
+        );
+
+        // 解明済みだが過去セーブデータでノード詳細が残っていない場合のフォールバック（最低1視点点灯）
+        if (isUnlocked && !hasR && !hasE && !hasD) {
+          if (n.char === "A") hasR = true;
+          else if (n.char === "B") hasE = true;
+          else if (n.char === "C") hasD = true;
+          else hasR = true;
+        }
+
+        redCount = (hasR ? 1 : 0) + (hasE ? 1 : 0) + (hasD ? 1 : 0);
+        isRedComplete = (redCount === 3);
+      }
+
+      var card = document.createElement("div");
+      var cardClass = "archive-card p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between transition-all ";
+
+      if (!isUnlocked) {
+        cardClass += "border border-neutral-800 bg-neutral-950/40 opacity-70";
+      } else if (!isClimaxBad) {
+        // 通常のBAD END（単独編）：解明時は赤
+        cardClass += "border border-rose-500/50 bg-rose-950/20 hover:border-rose-400";
+      } else {
+        // クライマックスBAD END：
+        if (isRedComplete) {
+          // 全3視点（R, E, D）完全踏破時：真紅のオーラと赤色発光！
+          cardClass += "border-2 border-rose-500 bg-gradient-to-br from-rose-950/40 via-neutral-900 to-neutral-950 shadow-[0_0_20px_rgba(244,63,94,0.35)] hover:border-rose-400";
+        } else {
+          // 部分解明時：探究心を煽るミステリアスな紫ベース
+          cardClass += "border border-purple-500/50 bg-purple-950/20 hover:border-purple-400";
+        }
+      }
+      card.className = cardClass;
+
+      var catBadge = "";
+      if (["BAD_02", "BAD_05", "BAD_11", "BAD_12", "BAD_14", "BAD_17", "BAD_19"].indexOf(k) !== -1) {
+        catBadge = '<span class="text-[9px] font-mono px-2 py-0.5 rounded border text-emerald-400 border-emerald-800 bg-emerald-950/60">レン編（自由）</span>';
+      } else if (["BAD_04", "BAD_10", "BAD_15", "BAD_18"].indexOf(k) !== -1) {
+        catBadge = '<span class="text-[9px] font-mono px-2 py-0.5 rounded border text-sky-400 border-sky-800 bg-sky-950/60">エレナ編（平等）</span>';
+      } else if (["BAD_01", "BAD_03", "BAD_13", "BAD_16"].indexOf(k) !== -1) {
+        catBadge = '<span class="text-[9px] font-mono px-2 py-0.5 rounded border text-amber-400 border-amber-800 bg-amber-950/60">ダニエル編（社会）</span>';
+      } else {
+        catBadge = '<span class="text-[9px] font-mono px-2 py-0.5 rounded border text-purple-400 border-purple-800 bg-purple-950/60">クライマックス</span>';
+      }
+
+      if (isUnlocked) {
+        var statusBadgeHtml = "";
+        if (!isClimaxBad) {
+          statusBadgeHtml = '<span class="text-[10px] text-rose-400 font-mono font-bold">💀 解明済</span>';
+        } else if (isRedComplete) {
+          statusBadgeHtml = '<span class="text-[10px] text-rose-400 font-mono font-bold animate-pulse">💀 RED完全踏破</span>';
+        } else {
+          statusBadgeHtml = '<span class="text-[10px] text-purple-300 font-mono font-bold">👁️ 部分解明 (' + redCount + '/3)</span>';
+        }
+
+        // クライマックス専用：R・E・D 視点インジケーター
+        var redIndicatorHtml = "";
+        if (isClimaxBad) {
+          var rClass = hasR 
+            ? (isRedComplete ? "bg-rose-600 text-white shadow-[0_0_8px_#f43f5e] font-black" : "bg-emerald-950 text-emerald-300 border border-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)] font-bold")
+            : "text-neutral-600 bg-neutral-900 border border-neutral-800";
+          var eClass = hasE 
+            ? (isRedComplete ? "bg-rose-600 text-white shadow-[0_0_8px_#f43f5e] font-black" : "bg-sky-950 text-sky-300 border border-sky-500 shadow-[0_0_6px_rgba(14,165,233,0.5)] font-bold")
+            : "text-neutral-600 bg-neutral-900 border border-neutral-800";
+          var dClass = hasD 
+            ? (isRedComplete ? "bg-rose-600 text-white shadow-[0_0_8px_#f43f5e] font-black" : "bg-amber-950 text-amber-300 border border-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.5)] font-bold")
+            : "text-neutral-600 bg-neutral-900 border border-neutral-800";
+
+          redIndicatorHtml = '<div class="flex items-center justify-between gap-1 mt-2 mb-1 px-2 py-1 rounded-lg bg-neutral-950/80 border ' + (isRedComplete ? 'border-rose-900/80 bg-rose-950/20' : 'border-neutral-800/80') + '">' +
+            '<div class="flex items-center gap-1.5 font-mono text-[9px]">' +
+              '<span class="' + (isRedComplete ? 'text-rose-400 font-bold' : 'text-neutral-400') + '">視点観測:</span>' +
+              '<span class="px-1.5 py-0.5 rounded text-[9px] cursor-default ' + rClass + '" title="' + (hasR ? 'レン視点で目撃済' : 'レン視点未踏破') + '">R</span>' +
+              '<span class="px-1.5 py-0.5 rounded text-[9px] cursor-default ' + eClass + '" title="' + (hasE ? 'エレナ視点で目撃済' : 'エレナ視点未踏破') + '">E</span>' +
+              '<span class="px-1.5 py-0.5 rounded text-[9px] cursor-default ' + dClass + '" title="' + (hasD ? 'ダニエル視点で目撃済' : 'ダニエル視点未踏破') + '">D</span>' +
+            '</div>' +
+            '<span class="text-[8px] font-mono ' + (isRedComplete ? 'text-rose-400 font-bold' : 'text-purple-400/80') + '">' +
+              (isRedComplete ? '✓ RED揃踏破' : '他視点も追究せよ') +
+            '</span>' +
+          '</div>';
+        }
+
+        card.innerHTML = '<div>' +
+          '<div class="flex items-center justify-between gap-1 mb-1.5">' +
+            catBadge +
+            statusBadgeHtml +
+          '</div>' +
+          '<h4 class="text-xs sm:text-sm font-black text-rose-300 font-hud line-clamp-1">' + n.title + '</h4>' +
+          redIndicatorHtml +
+          '<p class="text-[11px] text-neutral-300 mt-2 line-clamp-3 leading-relaxed">' + (n.desc || "") + '</p>' +
+          '<div class="text-[10px] text-amber-300 font-mono mt-2 bg-neutral-950/80 p-2 rounded border border-amber-900/40 line-clamp-2">💡 ' + (n.hint || "") + '</div>' +
+          '</div>' +
+          '<div class="mt-3 pt-2 border-t border-neutral-800/80 flex justify-between items-center">' +
+            '<span class="text-[10px] text-neutral-500 font-mono">' + k + '</span>' +
+            '<button class="btn-jump-from-badarchive px-2.5 py-1 bg-rose-900/60 hover:bg-rose-800 text-rose-100 text-[10px] font-bold rounded-lg border border-rose-500/40 transition-all active:scale-95 cursor-pointer" data-target="' + (n.jumpTarget || "A_1000") + '">因果の過去へJUMP ➔</button>' +
+          '</div>';
+
+        var btnJump = card.querySelector(".btn-jump-from-badarchive");
+        if (btnJump) {
+          btnJump.onclick = function(e) {
+            e.stopPropagation();
+            AudioEngine.play('jump');
+            closeBadEndArchive();
+            GameEngine.launchNode(this.getAttribute("data-target"), { isJump: true, type: "badend" });
+          };
+        }
+      } else {
+        card.innerHTML = '<div>' +
+          '<div class="flex items-center justify-between gap-1 mb-1.5">' +
+            catBadge +
+            '<span class="text-[10px] text-neutral-600 font-mono">🔒 未解明</span>' +
+          '</div>' +
+          '<h4 class="text-xs sm:text-sm font-bold text-neutral-500 font-hud">BAD END No.' + (n.badNumber || k.replace("BAD_", "")) + '【未解明の破滅】</h4>' +
+          '<p class="text-[11px] text-neutral-600 mt-2 leading-relaxed">この時間軸には、まだ見ぬ過ちの歴史が眠っている……。</p>' +
+          '<div class="text-[10px] text-neutral-600 font-mono mt-2 p-2 bg-neutral-950/40 rounded border border-neutral-900">🔒 運命の選択肢を探索せよ</div>' +
+          '</div>' +
+          '<div class="mt-3 pt-2 border-t border-neutral-900 text-right">' +
+          '<span class="text-[10px] text-neutral-600 font-mono">' + k + ' 封印中</span>' +
+          '</div>';
+      }
+
+      grid.appendChild(card);
+    });
+  }
+
+  var currentChartTab = null;
+
+  function openChart() {
+    AudioEngine.play('tap');
+    var prog = TimelineState.getHourProgress();
+    if (!currentChartTab) {
+      if (prog.hour2.allClear) currentChartTab = "CLIMAX";
+      else if (prog.hour1.allClear) currentChartTab = "H2";
+      else currentChartTab = "H1";
+    }
+    renderChartModal();
+    setupChartTabs();
+    var modal = document.getElementById("modalTimelineChart");
+    if (modal) modal.classList.remove("hidden");
+  }
+
+  function closeChart() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalTimelineChart");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function setupChartTabs() {
+    var tabs = document.querySelectorAll("#chartHourTabs button");
+    tabs.forEach(function(btn) {
+      var tabKey = btn.getAttribute("data-chart-tab");
+      btn.onclick = function(e) {
+        e.stopPropagation();
+        AudioEngine.play('tap');
+        currentChartTab = tabKey;
+        tabs.forEach(function(b) { b.classList.remove("chart-tab-active"); });
+        btn.classList.add("chart-tab-active");
+        renderChartModal();
+      };
+      if (tabKey === currentChartTab) {
+        btn.classList.add("chart-tab-active");
+      } else {
+        btn.classList.remove("chart-tab-active");
+      }
+    });
+  }
+
+  function renderChartModal() {
+    var state = TimelineState.getState();
+    var prog = TimelineState.getHourProgress();
+    var tab = currentChartTab || "ALL";
+
+    // バタフライ因果を発生させる重要キーノード一覧
+    var butterflyNodes = {
+      "A_1015": "配電盤破壊 ➔ ダニエルのICU送電に波及",
+      "B_1030": "水門爆破 ➔ レン・ダニエルへの濁流波及",
+      "C_1000": "警備兵拒絶 ➔ エレナの密告逮捕に波及",
+      "B_1115": "送電遮断 ➔ レンのドローン墜落に波及",
+      "C_1110": "ストライキ ➔ レンの毒ガス回避に波及",
+      "A_1130": "略奪扇動 ➔ ダニエルの診療所崩壊に波及",
+      "C_1135": "サイレン ➔ エレナのリフト狙撃に波及",
+      "C_1045": "統制命令 ➔ レンの演説聴衆に波及"
+    };
+
+    // ノードカード要素生成ヘルパー
+    function createNodeCard(nid, charKey) {
+      var n = MASTER_DB.nodes[nid];
+      if (!n) return null;
+      var isVisited = state.visitedNodes.indexOf(nid) !== -1;
+      var isCurrent = (state.currentNodeKey === nid);
+      var isButterfly = Boolean(butterflyNodes[nid]);
+
+      var item = document.createElement("div");
+      item.className = "p-2 rounded-xl border text-xs transition-all flex justify-between items-center " +
+        (isCurrent ? "bg-amber-950/70 border-amber-500 text-amber-200 font-black shadow-lg" :
+         isVisited ? "bg-neutral-900 border-neutral-750 text-neutral-200 hover:border-neutral-500 cursor-pointer" :
+         "bg-neutral-950/40 border-neutral-850 text-neutral-600 cursor-not-allowed");
+
+      var titleStr = isVisited ? n.title : "？？？？？";
+      var timeStr = n.time || "--:--";
+      var butterflyHtml = (isButterfly && isVisited) ? '<span class="butterfly-badge ml-1" title="' + butterflyNodes[nid] + '">⚡因果</span>' : '';
+
+      item.innerHTML = '<div class="min-w-0 pr-1">'
+        + '<div class="text-[9px] opacity-70 font-mono flex items-center gap-1"><span>' + timeStr + '</span>' + butterflyHtml + '</div>'
+        + '<div class="font-bold truncate max-w-[90px] sm:max-w-[130px] md:max-w-[160px]">' + titleStr + '</div>'
+        + '</div>'
+        + (isCurrent ? '<span class="text-[9px] text-amber-400 font-mono shrink-0">★現在</span>' :
+           isVisited ? '<span class="text-[9px] text-emerald-400 font-mono shrink-0">到達</span>' :
+           '<span class="text-[9px] text-neutral-600 font-mono shrink-0">未通</span>');
+
+      if (isVisited && !isCurrent) {
+        item.onclick = function() {
+          AudioEngine.play('jump');
+          closeChart();
+          GameEngine.launchNode(nid, { isJump: true, type: "chart" });
+        };
+      }
+      return item;
+    }
+
+    // プレースホルダー生成ヘルパー
+    function createPlaceholder(text) {
+      var ph = document.createElement("div");
+      ph.className = "chart-slot-placeholder text-[10px] text-neutral-600 font-mono text-center";
+      ph.textContent = text;
+      return ph;
+    }
+
+    // 1. 各タイムスロット行（Time Row）レンダリング
+    var chartCols = document.getElementById("chartColumns");
+    if (chartCols) {
+      if (tab === "CLIMAX") {
+        chartCols.style.display = "none";
+      } else {
+        chartCols.style.display = "flex";
+        chartCols.className = "flex flex-col gap-1 w-full";
+        chartCols.innerHTML = "";
+
+        // ヘッダー行
+        var headerRow = document.createElement("div");
+        headerRow.className = "grid grid-cols-[55px_1fr_1fr_1fr] sm:grid-cols-[70px_1fr_1fr_1fr] gap-2 pb-2 border-b border-neutral-800 text-center font-bold text-xs sticky top-0 bg-neutral-950/95 z-10 backdrop-blur";
+        headerRow.innerHTML = '<div class="text-neutral-500 font-mono flex items-center justify-center">時刻</div>'
+          + '<div class="text-emerald-400 flex items-center justify-center gap-1"><span>A: レン</span><span class="hidden sm:inline text-[9px] px-1 bg-emerald-950 rounded border border-emerald-800 font-normal">自由権</span></div>'
+          + '<div class="text-sky-400 flex items-center justify-center gap-1"><span>B: エレナ</span><span class="hidden sm:inline text-[9px] px-1 bg-sky-950 rounded border border-sky-800 font-normal">平等権</span></div>'
+          + '<div class="text-amber-400 flex items-center justify-center gap-1"><span>C: ダニエル</span><span class="hidden sm:inline text-[9px] px-1 bg-amber-950 rounded border border-amber-800 font-normal">社会権</span></div>';
+        chartCols.appendChild(headerRow);
+
+        // スロット定義
+        var slots = [];
+        if (tab === "H1" || tab === "ALL") {
+          slots.push(
+            { timeLabel: "10:00", filterA: ["A_1000", "A_1000_MIC"], filterB: ["B_1000"], filterC: ["C_1000"], defA: "首輪の火花", defB: "特権制服の脱走", defC: "スラム診療所の灯火" },
+            { timeLabel: "10:15", filterA: ["A_1015"], filterB: ["B_1015_CHECK_REN", "B_1015"], filterC: ["C_1015"], defA: "地上検問の選択", defB: "水門コンソールの葛藤", defC: "抗毒素血清の補充" },
+            { timeLabel: "10:30", filterA: ["A_1030_DARK", "A_1030_SMOKE"], filterB: ["B_1030_OPEN", "B_1030_BLOW"], filterC: ["C_1030_BLACKOUT", "C_1030_SURVIVE"], defA: "粉塵の煙幕と青い板", defB: "耐火金庫の解錠", defC: "診療所の給電維持" },
+            { timeLabel: "10:45", filterA: ["A_1045_WATERGATE"], filterB: ["B_1045", "B_1045_GATE", "B_1045_DUCT"], filterC: ["C_1045", "C_1045_EMMA_AID", "C_1045_PODIUM", "C_1045_LEADER"], defA: "鉄錆の巨大水門", defB: "地下放水路の突破", defC: "配給所への直談判" },
+            { timeLabel: "11:00", filterA: ["A_1100", "A_1100_ROOFTOP_CLEAR"], filterB: ["B_1100", "B_1100_LIFT_SAFE"], filterC: ["C_1100", "C_1100_SOLO", "C_1100_SCRUM"], defA: "第1アワー突破", defB: "第1アワー突破", defC: "第1アワー突破" }
+          );
+        }
+        if (tab === "H2" || tab === "ALL") {
+          slots.push(
+            { timeLabel: "11:15", filterA: ["A_1105", "A_1105_TIMING", "A_1105_PEBBLE"], filterB: ["B_1115_EASY", "B_1115"], filterC: ["C_1110"], defA: "タワー外壁登攀", defB: "送電網の緊急遮断", defC: "労働者ストライキ" },
+            { timeLabel: "11:30", filterA: ["A_1125", "A_1130_CHECK_DANIEL", "A_1130"], filterB: ["B_1120", "B_1120_FUSE", "B_1120_BEAM", "B_1120_BEAM_SAFE"], filterC: [], defA: "電波ジャック突入", defB: "梁上のステルス突破", defC: "── 座り込み支援中 ──" },
+            { timeLabel: "11:45", filterA: ["A_1145_CHECK_BOOMERANG"], filterB: ["B_1145", "B_1145_CHECK_DANIEL", "B_1145_CHECK_SURRENDER"], filterC: ["C_1135", "C_1140_CHECK_REN", "C_1140"], defA: "東翼管制室前", defB: "西翼生体認証突破", defC: "配給直談判と封鎖" },
+            { timeLabel: "11:50", filterA: ["A_1150"], filterB: ["B_1150"], filterC: ["C_1150"], defA: "東翼管制室到達", defB: "西翼管制室到達", defC: "南翼管制室到達" }
+          );
+        }
+
+        // 行ループ描画
+        slots.forEach(function(sl) {
+          var row = document.createElement("div");
+          row.className = "chart-time-row";
+
+          // 時刻ラベル
+          var timeCol = document.createElement("div");
+          timeCol.className = "flex items-center justify-center font-mono text-xs text-amber-400 bg-neutral-900/60 rounded-lg p-1 border border-neutral-800 self-stretch";
+          timeCol.innerHTML = '<span>' + sl.timeLabel + '</span>';
+          row.appendChild(timeCol);
+
+          // Aセル (レン)
+          var cellA = document.createElement("div");
+          cellA.className = "flex flex-col gap-1.5 justify-center";
+          if (sl.filterA.length > 0) {
+            sl.filterA.forEach(function(nid) {
+              var card = createNodeCard(nid, "A");
+              if (card) cellA.appendChild(card);
+            });
+          } else {
+            cellA.appendChild(createPlaceholder(sl.defA));
+          }
+          row.appendChild(cellA);
+
+          // Bセル (エレナ)
+          var cellB = document.createElement("div");
+          cellB.className = "flex flex-col gap-1.5 justify-center";
+          if (sl.filterB.length > 0) {
+            sl.filterB.forEach(function(nid) {
+              var card = createNodeCard(nid, "B");
+              if (card) cellB.appendChild(card);
+            });
+          } else {
+            cellB.appendChild(createPlaceholder(sl.defB));
+          }
+          row.appendChild(cellB);
+
+          // Cセル (ダニエル)
+          var cellC = document.createElement("div");
+          cellC.className = "flex flex-col gap-1.5 justify-center";
+          if (sl.filterC.length > 0) {
+            sl.filterC.forEach(function(nid) {
+              var card = createNodeCard(nid, "C");
+              if (card) cellC.appendChild(card);
+            });
+          } else {
+            cellC.appendChild(createPlaceholder(sl.defC));
+          }
+          row.appendChild(cellC);
+
+          chartCols.appendChild(row);
+        });
+      }
+    }
+
+    // 2. クライマックス合流・結末コンテナ (#containerClimaxConvergence) レンダリング
+    var climaxContainer = document.getElementById("containerClimaxConvergence");
+    var colClimax = document.getElementById("columnNodesClimax");
+    var climaxSyncBadge = document.getElementById("climaxSyncBadge");
+
+    if (climaxContainer && colClimax) {
+      if (tab === "H1") {
+        climaxContainer.style.display = "none";
+      } else {
+        climaxContainer.style.display = "block";
+      }
+
+      var isUnlockedH2 = prog.hour2.allClear;
+      if (climaxSyncBadge) {
+        if (isUnlockedH2) {
+          climaxSyncBadge.textContent = "★ 3人合流完了 (READY)";
+          climaxSyncBadge.className = "text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 border border-emerald-400 text-emerald-300 font-bold";
+        } else {
+          climaxSyncBadge.textContent = "🔒 3大管制室の同期待ち";
+          climaxSyncBadge.className = "text-[10px] font-mono px-2 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-400 font-bold";
+        }
+      }
+
+      // クライマックス・フローチャート（線結びダイアグラム）の描画
+      renderClimaxFlowDiagram(colClimax, state, prog);
+    }
+
+    // 3. 結末解明カウンター（全23 BAD END + クリアエンドの実数計算）
+    var unlockedCount = Object.keys(state.unlockedEndings || {}).filter(function(k) {
+      return k.startsWith("BAD_") || k.includes("CLEAR") || k.includes("END");
+    }).length;
+    var countEl = document.getElementById("chartProgressText");
+    if (countEl) countEl.textContent = unlockedCount + " / 23 結末解明";
+    var btnCert = document.getElementById("btnChartCertDownload");
+    if (btnCert) {
+      btnCert.classList.toggle("hidden", unlockedCount === 0);
+    }
+  }
+
+  // クライマックス・フローチャート描画専用関数
+  function renderClimaxFlowDiagram(container, state, prog) {
+    container.innerHTML = "";
+    container.className = "flex flex-col gap-2.5 w-full py-1";
+
+    function makeCard(nid, label, time, styleType) {
+      var n = MASTER_DB.nodes[nid] || {};
+      var isVisited = state.visitedNodes.indexOf(nid) !== -1;
+      var isCurrent = (state.currentNodeKey === nid);
+      var isEnding = Boolean(n.isClearEnd || nid === "NORMAL_CLEAR" || nid === "TRUE_SECRET_END");
+      var isBad = Boolean(n.isBadEnd || nid.startsWith("BAD_"));
+
+      var card = document.createElement("div");
+      var bgStyle = "bg-neutral-900 border-neutral-750 text-neutral-200 hover:border-amber-500 cursor-pointer";
+      if (isCurrent) {
+        bgStyle = "bg-amber-950/90 border-amber-400 text-amber-200 font-black shadow-lg shadow-amber-500/30 climax-pulse-glow";
+      } else if (isEnding) {
+        if (nid === "TRUE_SECRET_END") {
+          bgStyle = isVisited
+            ? "bg-gradient-to-r from-purple-950 via-amber-950 to-neutral-900 border-2 border-amber-400 text-amber-200 shadow-lg shadow-amber-500/40 cursor-pointer"
+            : "bg-neutral-950/60 border-neutral-850 text-neutral-600 cursor-not-allowed";
+        } else {
+          bgStyle = isVisited
+            ? "bg-gradient-to-r from-sky-950 to-neutral-900 border-2 border-sky-400 text-sky-200 shadow cursor-pointer"
+            : "bg-neutral-950/60 border-neutral-850 text-neutral-600 cursor-not-allowed";
+        }
+      } else if (isBad) {
+        bgStyle = isVisited
+          ? "bg-red-950/50 border border-red-700/80 text-red-200 hover:border-red-400 cursor-pointer"
+          : "bg-neutral-950/40 border-neutral-850 text-neutral-600 cursor-not-allowed";
+      } else if (!isVisited) {
+        bgStyle = "bg-neutral-950/50 border-neutral-850 text-neutral-600 cursor-not-allowed";
+      }
+
+      card.className = "p-2.5 rounded-xl border text-xs transition-all flex justify-between items-center " + bgStyle;
+      var titleText = isVisited ? (label || n.title || nid) : "？？？？？（未到達）";
+      var timeText = time || n.time || "12:00";
+
+      card.innerHTML = '<div class="min-w-0 pr-2">'
+        + '<div class="text-[10px] font-mono text-amber-400 opacity-80">' + timeText + '</div>'
+        + '<div class="font-bold truncate">' + titleText + '</div>'
+        + '</div>'
+        + (isCurrent ? '<span class="text-[10px] text-amber-400 font-mono font-black shrink-0">★ 現在地</span>' :
+           isVisited ? (isEnding ? '<span class="text-[10px] text-amber-300 font-mono font-bold shrink-0">🏆 結末</span>' :
+                        isBad ? '<span class="text-[10px] text-red-400 font-mono shrink-0">BAD</span>' :
+                        '<span class="text-[10px] text-emerald-400 font-mono shrink-0">到達済</span>') :
+           '<span class="text-[10px] text-neutral-600 font-mono shrink-0">未開放</span>');
+
+      if (isVisited && !isCurrent) {
+        card.onclick = function() {
+          AudioEngine.play('jump');
+          closeChart();
+          GameEngine.launchNode(nid, { isJump: true, type: "chart" });
+        };
+      }
+      return card;
+    }
+
+    function makeLine(label) {
+      var wrap = document.createElement("div");
+      wrap.className = "flex flex-col items-center justify-center my-0.5";
+      wrap.innerHTML = '<div class="climax-flow-line-vertical"></div>'
+        + (label ? '<span class="text-[9px] font-mono text-amber-400 bg-neutral-950 px-2 py-0.5 rounded border border-amber-500/40 my-0.5 shadow">' + label + '</span>' : '');
+      return wrap;
+    }
+
+    // Step 1: 12:00 三者集結
+    var step1Wrap = document.createElement("div");
+    step1Wrap.className = "w-full max-w-lg mx-auto";
+    step1Wrap.appendChild(makeCard("CLIMAX_HUB", "★ 12:00 CLIMAX_HUB (三者集結・自爆阻止)", "12:00", "hub"));
+    container.appendChild(step1Wrap);
+
+    // コネクタ: 3方向分岐
+    container.appendChild(makeLine("三者それぞれの管制端末へ突入 ▼"));
+
+    // Step 2: 12:00〜12:20 3視点決断（3並列）
+    var step2Grid = document.createElement("div");
+    step2Grid.className = "grid grid-cols-1 md:grid-cols-3 gap-2.5 w-full";
+
+    // A列
+    var colA = document.createElement("div");
+    colA.className = "flex flex-col gap-1.5 p-2 bg-neutral-950/60 rounded-xl border border-emerald-900/50";
+    colA.innerHTML = '<div class="text-[10px] font-bold text-emerald-400 flex items-center gap-1 pb-1 border-b border-emerald-900/40"><span>A: レン (東翼防衛)</span></div>';
+    colA.appendChild(makeCard("CLIMAX_REN_START", "東翼突入・激突", "12:00"));
+    colA.appendChild(makeCard("CLIMAX_REN_DECISION", "シャットダウンキー決断", "12:20"));
+    step2Grid.appendChild(colA);
+
+    // B列
+    var colB = document.createElement("div");
+    colB.className = "flex flex-col gap-1.5 p-2 bg-neutral-950/60 rounded-xl border border-sky-900/50";
+    colB.innerHTML = '<div class="text-[10px] font-bold text-sky-400 flex items-center gap-1 pb-1 border-b border-sky-900/40"><span>B: エレナ (西翼政庁)</span></div>';
+    colB.appendChild(makeCard("CLIMAX_ELENA_START", "西翼突入・対峙", "12:00"));
+    colB.appendChild(makeCard("CLIMAX_ELENA_DECISION", "マスターキー決断", "12:20"));
+    step2Grid.appendChild(colB);
+
+    // C列
+    var colC = document.createElement("div");
+    colC.className = "flex flex-col gap-1.5 p-2 bg-neutral-950/60 rounded-xl border border-amber-900/50";
+    colC.innerHTML = '<div class="text-[10px] font-bold text-amber-400 flex items-center gap-1 pb-1 border-b border-amber-900/40"><span>C: ダニエル (南翼インフラ)</span></div>';
+    colC.appendChild(makeCard("CLIMAX_DANIEL_START", "南翼突入・破傷風救護", "12:00"));
+    colC.appendChild(makeCard("CLIMAX_DANIEL_DECISION", "命の平等・キー決断", "12:20"));
+    step2Grid.appendChild(colC);
+
+    container.appendChild(step2Grid);
+
+    // コネクタ: 三者合流
+    container.appendChild(makeLine("三者完全同期（トリプルシンクロ）達成！ ▼"));
+
+    // Step 3: 12:30 隔壁開放・スキャナ起動
+    var step3Wrap = document.createElement("div");
+    step3Wrap.className = "w-full max-w-lg mx-auto";
+    step3Wrap.appendChild(makeCard("CLIMAX_CONVERGE_HUB", "✨ 12:30 三つの光の結集 / 隔壁開放", "12:30"));
+    container.appendChild(step3Wrap);
+
+    container.appendChild(makeLine("古遺物光学スキャン解析 ▼"));
+
+    // Step 4: 12:35 古遺物スキャン
+    var step4Wrap = document.createElement("div");
+    step4Wrap.className = "grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-2 max-w-lg mx-auto w-full items-center";
+    step4Wrap.appendChild(makeCard("CLIMAX_SCAN", "📜 12:35 古遺物スキャン：三大人権の真実", "12:35"));
+    step4Wrap.appendChild(makeCard("BAD_09", "BAD 09【暴走】", "12:35"));
+    container.appendChild(step4Wrap);
+
+    container.appendChild(makeLine("憲法ブロードキャスト最終意思決定 ▼"));
+
+    // Step 5: 12:35 最終意思決定
+    var step5Wrap = document.createElement("div");
+    step5Wrap.className = "grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-2 max-w-lg mx-auto w-full items-center";
+    step5Wrap.appendChild(makeCard("CLIMAX_DECISION", "⚡ 12:35 憲法ブロードキャスト認証決断", "12:35"));
+    step5Wrap.appendChild(makeCard("BAD_23", "BAD 23【道連れ】", "12:35"));
+    container.appendChild(step5Wrap);
+
+    container.appendChild(makeLine("「せーのッ！」で完全同時押し！ ▼"));
+
+    // Step 6: 12:35 憲法解凍・特権統治崩壊
+    var step6Wrap = document.createElement("div");
+    step6Wrap.className = "w-full max-w-lg mx-auto";
+    step6Wrap.appendChild(makeCard("CLIMAX_RESOLVE", "🌅 12:35 三大基本的人権の調和 / 憲法解凍", "12:35"));
+    container.appendChild(step6Wrap);
+
+    container.appendChild(makeLine("運命の結末分岐（古遺物3種所持判定） ▼"));
+
+    // Step 7: 結末分岐（2股）
+    var step7Grid = document.createElement("div");
+    step7Grid.className = "grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg mx-auto";
+    step7Grid.appendChild(makeCard("NORMAL_CLEAR", "🏆 通常クリア【三色の光が照らす朝】", "12:30", "ending"));
+    step7Grid.appendChild(makeCard("TRUE_SECRET_END", "🌟 真エンド【東京湾の夜明け、新世紀の憲法】", "13:00", "secret"));
+    container.appendChild(step7Grid);
+  }
+
+  function renderTimeBlockStatus() {
+    var state = TimelineState.getState();
+    var prog = TimelineState.getHourProgress();
+
+    var hb1 = document.getElementById("hourBlock1");
+    var hb2 = document.getElementById("hourBlock2");
+    var hb3 = document.getElementById("hourBlock3");
+    var hbs1 = document.getElementById("hourBlockStatus1");
+    var hbs2 = document.getElementById("hourBlockStatus2");
+    var hbs3 = document.getElementById("hourBlockStatus3");
+    var currentHourLabel = document.getElementById("currentHourLabel");
+
+    // Hour 1
+    if (prog.hour1.allClear) {
+      if (hb1) hb1.className = "p-2 rounded-xl border bg-emerald-950/60 border-emerald-500 text-emerald-200 transition-all";
+      if (hbs1) hbs1.innerHTML = "✓ ALL CLEAR";
+    } else {
+      var h1ClearedCount = (prog.hour1.A ? 1 : 0) + (prog.hour1.B ? 1 : 0) + (prog.hour1.C ? 1 : 0);
+      if (hb1) hb1.className = "p-2 rounded-xl border bg-amber-950/40 border-amber-500 text-amber-200 transition-all";
+      if (hbs1) hbs1.innerHTML = "進行中 (" + h1ClearedCount + "/3)";
+    }
+
+    // Hour 2
+    if (prog.hour1.allClear) {
+      if (prog.hour2.allClear) {
+        if (hb2) hb2.className = "p-2 rounded-xl border bg-emerald-950/60 border-emerald-500 text-emerald-200 transition-all";
+        if (hbs2) hbs2.innerHTML = "✓ ALL CLEAR";
+      } else {
+        var h2ClearedCount = (prog.hour2.A ? 1 : 0) + (prog.hour2.B ? 1 : 0) + (prog.hour2.C ? 1 : 0);
+        if (hb2) hb2.className = "p-2 rounded-xl border bg-sky-950/50 border-sky-400 text-sky-200 transition-all";
+        if (hbs2) hbs2.innerHTML = "解禁済 (" + h2ClearedCount + "/3)";
+      }
+    } else {
+      if (hb2) hb2.className = "p-2 rounded-xl border bg-neutral-950 border-neutral-800 text-neutral-500 transition-all";
+      if (hbs2) hbs2.innerHTML = "🔒 全員H1クリアで解放";
+    }
+
+    // Climax
+    if (prog.climaxUnlocked) {
+      if (hb3) hb3.className = "p-2 rounded-xl border bg-gradient-to-r from-amber-950 to-neutral-900 border-amber-400 text-amber-200 gold-glow transition-all";
+      if (hbs3) hbs3.innerHTML = "★ UNLOCKED";
+    } else {
+      if (hb3) hb3.className = "p-2 rounded-xl border bg-neutral-950 border-neutral-800 text-neutral-500 transition-all";
+      if (hbs3) hbs3.innerHTML = "🔒 全員H2クリアで解放";
+    }
+
+    // Header Label
+    if (currentHourLabel) {
+      if (prog.climaxUnlocked) {
+        currentHourLabel.textContent = "★ 最終章（12:00 クライマックス）突入可能！";
+        currentHourLabel.className = "text-amber-300 font-black bg-amber-950/90 px-2.5 py-0.5 rounded border border-amber-400";
+      } else if (prog.hour1.allClear) {
+        currentHourLabel.textContent = "第2アワー（11:00 - 12:00）進行中";
+        currentHourLabel.className = "text-sky-300 font-bold bg-sky-950/80 px-2 py-0.5 rounded border border-sky-800";
+      } else {
+        currentHourLabel.textContent = "第1アワー（10:00 - 11:00）進行中";
+        currentHourLabel.className = "text-amber-300 font-bold bg-neutral-950 px-2 py-0.5 rounded border border-neutral-800";
+      }
+    }
+
+    // 各主人公カードのバッジ更新
+    var badgeA = document.getElementById("badgeCharA");
+    var badgeB = document.getElementById("badgeCharB");
+    var badgeC = document.getElementById("badgeCharC");
+    var btnLabelA = document.getElementById("btnLabelCharA");
+    var btnLabelB = document.getElementById("btnLabelCharB");
+    var btnLabelC = document.getElementById("btnLabelCharC");
+    var flags = state.userFlags || [];
+    var aDone1210 = flags.indexOf("FLAG_REN_PRESSED") !== -1 || flags.indexOf("FLAG_REN_ABORTED") !== -1;
+    var bDone1210 = flags.indexOf("FLAG_ELENA_PRESSED") !== -1 || flags.indexOf("FLAG_ELENA_ABORTED") !== -1;
+    var cDone1210 = flags.indexOf("FLAG_DANIEL_PRESSED") !== -1 || flags.indexOf("FLAG_DANIEL_ABORTED") !== -1;
+
+    // A: レン
+    if (badgeA) {
+      if (prog.hour2.allClear) {
+        if (aDone1210) {
+          badgeA.textContent = "✓ 12:10 同調完了 (待機中)";
+          badgeA.className = "text-[10px] font-mono font-bold text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-400";
+        } else {
+          badgeA.textContent = "★ 12:00 最終決戦突入可能 ▶";
+          badgeA.className = "text-[10px] font-mono font-bold text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-400 animate-pulse";
+        }
+      } else if (prog.hour2.A) {
+        badgeA.innerHTML = '<span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>11:50 東管制室到達 (他主人公の合流待機中……)</span>';
+        badgeA.className = "text-[10px] font-mono font-bold text-emerald-300 bg-emerald-950/90 px-2 py-0.5 rounded border border-emerald-400/80 shadow-md shadow-emerald-950/50";
+      } else if (prog.hour1.A) {
+        badgeA.textContent = prog.hour1.allClear ? "11:00 進行可能 ▶" : "✓ 10:00〜11:00 完了 (他キャラ待機)";
+        badgeA.className = "text-[10px] font-mono font-bold " + (prog.hour1.allClear ? "text-emerald-400 bg-emerald-950" : "text-neutral-400 bg-neutral-900") + " px-2 py-0.5 rounded border border-emerald-500/40";
+      } else {
+        badgeA.textContent = "10:00 進行可能 ▶";
+      }
+    }
+
+    // B: エレナ
+    if (badgeB) {
+      if (prog.hour2.allClear) {
+        if (bDone1210) {
+          badgeB.textContent = "✓ 12:10 同調完了 (待機中)";
+          badgeB.className = "text-[10px] font-mono font-bold text-sky-300 bg-sky-950 px-2 py-0.5 rounded border border-sky-400";
+        } else {
+          badgeB.textContent = "★ 12:00 最終決戦突入可能 ▶";
+          badgeB.className = "text-[10px] font-mono font-bold text-sky-300 bg-sky-950 px-2 py-0.5 rounded border border-sky-400 animate-pulse";
+        }
+      } else if (prog.hour2.B) {
+        badgeB.innerHTML = '<span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>11:50 西管制室到達 (他主人公の合流待機中……)</span>';
+        badgeB.className = "text-[10px] font-mono font-bold text-sky-300 bg-sky-950/90 px-2 py-0.5 rounded border border-sky-400/80 shadow-md shadow-sky-950/50";
+      } else if (prog.hour1.B) {
+        badgeB.textContent = prog.hour1.allClear ? "11:00 進行可能 ▶" : "✓ 10:00〜11:00 完了 (他キャラ待機)";
+        badgeB.className = "text-[10px] font-mono font-bold " + (prog.hour1.allClear ? "text-sky-400 bg-sky-950" : "text-neutral-400 bg-neutral-900") + " px-2 py-0.5 rounded border border-sky-500/40";
+      } else {
+        badgeB.textContent = "10:00 進行可能 ▶";
+      }
+    }
+
+    // C: ダニエル
+    if (badgeC) {
+      if (prog.hour2.allClear) {
+        if (cDone1210) {
+          badgeC.textContent = "✓ 12:10 同調完了 (待機中)";
+          badgeC.className = "text-[10px] font-mono font-bold text-amber-300 bg-amber-950 px-2 py-0.5 rounded border border-amber-400";
+        } else {
+          badgeC.textContent = "★ 12:00 最終決戦突入可能 ▶";
+          badgeC.className = "text-[10px] font-mono font-bold text-amber-300 bg-amber-950 px-2 py-0.5 rounded border border-amber-400 animate-pulse";
+        }
+      } else if (prog.hour2.C) {
+        badgeC.innerHTML = '<span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>11:50 南管制室到達 (他主人公の合流待機中……)</span>';
+        badgeC.className = "text-[10px] font-mono font-bold text-amber-300 bg-amber-950/90 px-2 py-0.5 rounded border border-amber-400/80 shadow-md shadow-amber-950/50";
+      } else if (prog.hour1.C) {
+        badgeC.textContent = prog.hour1.allClear ? "11:00 進行可能 ▶" : "✓ 10:00〜11:00 完了 (他キャラ待機)";
+        badgeC.className = "text-[10px] font-mono font-bold " + (prog.hour1.allClear ? "text-amber-400 bg-amber-950" : "text-neutral-400 bg-neutral-900") + " px-2 py-0.5 rounded border border-amber-500/40";
+      } else {
+        badgeC.textContent = "10:00 進行可能 ▶";
+      }
+    }
+
+    // 各主人公ボタンラベル動的更新
+    if (btnLabelA) {
+      if (prog.hour2.allClear) btnLabelA.innerHTML = aDone1210 ? '<span>12:10 待機中</span>' : '<span>12:00 決戦突入 ▶</span>';
+      else if (prog.hour2.A) btnLabelA.innerHTML = '<span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>待機中 (11:50)</span>';
+      else if (prog.hour1.A && !prog.hour1.allClear) btnLabelA.innerHTML = '<span>H1完了待機</span>';
+      else if (prog.hour1.allClear) btnLabelA.innerHTML = '<span>H2潜入開始 ▶</span>';
+      else btnLabelA.innerHTML = '<span>潜入開始 ▶</span>';
+    }
+    if (btnLabelB) {
+      if (prog.hour2.allClear) btnLabelB.innerHTML = bDone1210 ? '<span>12:10 待機中</span>' : '<span>12:00 決戦突入 ▶</span>';
+      else if (prog.hour2.B) btnLabelB.innerHTML = '<span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping"></span>待機中 (11:50)</span>';
+      else if (prog.hour1.B && !prog.hour1.allClear) btnLabelB.innerHTML = '<span>H1完了待機</span>';
+      else if (prog.hour1.allClear) btnLabelB.innerHTML = '<span>H2潜入開始 ▶</span>';
+      else btnLabelB.innerHTML = '<span>潜入開始 ▶</span>';
+    }
+    if (btnLabelC) {
+      if (prog.hour2.allClear) btnLabelC.innerHTML = cDone1210 ? '<span>12:10 待機中</span>' : '<span>12:00 決戦突入 ▶</span>';
+      else if (prog.hour2.C) btnLabelC.innerHTML = '<span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>待機中 (11:50)</span>';
+      else if (prog.hour1.C && !prog.hour1.allClear) btnLabelC.innerHTML = '<span>H1完了待機</span>';
+      else if (prog.hour1.allClear) btnLabelC.innerHTML = '<span>H2診療開始 ▶</span>';
+      else btnLabelC.innerHTML = '<span>診療開始 ▶</span>';
+    }
+
+    // ロックオーバーレイ動的同期（エレナ・ダニエル）
+    var overlayB = document.getElementById("lockOverlayB");
+    var overlayC = document.getElementById("lockOverlayC");
+    if (overlayB) {
+      var isBUnlocked = (
+        state.visitedNodes.indexOf("A_1045_WATERGATE") !== -1 ||
+        state.visitedNodes.indexOf("KEEP_OUT_A1") !== -1 ||
+        state.visitedNodes.indexOf("A_1100") !== -1 ||
+        state.visitedNodes.indexOf("B_1000") !== -1 ||
+        prog.hour1.A
+      );
+      overlayB.classList.toggle("hidden", isBUnlocked);
+    }
+    if (overlayC) {
+      var isCUnlocked = (
+        Boolean(state.unlockedEndings && state.unlockedEndings["BAD_10"]) ||
+        state.visitedNodes.indexOf("BAD_10") !== -1 ||
+        state.slots["C_1000"] === "C_HEAL" ||
+        state.visitedNodes.indexOf("C_1000") !== -1 ||
+        prog.hour1.C
+      );
+      overlayC.classList.toggle("hidden", isCUnlocked);
+    }
+
+    // クライマックスカード表示切り替え（カード自体は2x2グリッド維持のため常時block、ロックオーバーレイで制御）
+    var cardClimax = document.getElementById("cardClimax");
+    if (cardClimax) {
+      cardClimax.style.display = "block";
+    }
+    var overlayClimax = document.getElementById("lockOverlayClimax");
+    if (overlayClimax) {
+      overlayClimax.classList.toggle("hidden", !!prog.climaxUnlocked);
+    }
+
+    // 特別外伝：オーガスト卿の極秘手記（自伝）カード表示切り替え
+    var cardAugust = document.getElementById("cardCharAugust");
+    if (cardAugust) {
+      var isAugustUnlocked = (typeof TimelineState !== "undefined" && TimelineState.hasClearedTrueEnd && TimelineState.hasClearedTrueEnd());
+      cardAugust.classList.toggle("hidden", !isAugustUnlocked);
+    }
+
+    // 特別外伝：シン編（全BAD END踏破特典）カード表示切り替え
+    var cardShin = document.getElementById("cardCharShin");
+    if (cardShin) {
+      var badEndsList = Object.keys(state.unlockedEndings || {}).filter(function(k) { return k.startsWith("BAD_"); });
+      var isShinUnlocked = (badEndsList.length >= 26 || (state.trophies && state.trophies.shinMaster) || (state.visitedNodes && state.visitedNodes.indexOf("SHIN_01_MEMORY") !== -1));
+      cardShin.classList.toggle("hidden", !isShinUnlocked);
+    }
+
+
+    // ヘッダー実績カウンター更新
+    var tipsCountEl = document.getElementById("headerTipsCount");
+    if (tipsCountEl) {
+      var tipsUnlocked = state.unlockedTips ? Object.keys(state.unlockedTips).length : 0;
+      tipsCountEl.textContent = tipsUnlocked;
+    }
+    var badEndCountEl = document.getElementById("headerBadEndCount");
+    if (badEndCountEl) {
+      var badEnds = Object.keys(state.unlockedEndings || {}).filter(function(k) { return k.startsWith("BAD_"); }).length;
+      badEndCountEl.textContent = badEnds;
+    }
+    var bannerBadEndCountEl = document.getElementById("bannerBadEndCount");
+    if (bannerBadEndCountEl) {
+      var badEnds = Object.keys(state.unlockedEndings || {}).filter(function(k) { return k.startsWith("BAD_"); }).length;
+      bannerBadEndCountEl.textContent = badEnds;
+    }
+
+    // 一度クリア後 煽りバナー表示判定（君は真のストーリーを見ることができるか？）
+    var bannerTeaser = document.getElementById("bannerClearedOnceTeaser");
+    if (bannerTeaser) {
+      bannerTeaser.style.display = TimelineState.hasClearedOnce() ? "flex" : "none";
+    }
+
+    // 【旋律柱】旋律図鑑（サウンドトラック）解放判定
+    if (typeof SoundtrackGallery !== "undefined" && SoundtrackGallery.checkUnlockStatus) {
+      SoundtrackGallery.checkUnlockStatus();
+    }
+  }
+
+  // 428 神演出：因果解放・ロック粉砕チェック
+  function checkAndPlayUnlockAnimation() {
+    var state = TimelineState.getState();
+    if (!state) return;
+
+    // 1. エレナのロック解除判定（レンが水門KEEP OUTまたは到達し、かつ未再生の場合）
+    var isRenTriggered = (
+      state.visitedNodes.indexOf("A_1045_WATERGATE") !== -1 ||
+      state.visitedNodes.indexOf("KEEP_OUT_A1") !== -1 ||
+      state.visitedNodes.indexOf("A_1100") !== -1
+    );
+    if (isRenTriggered && !state.seenUnlockAnim_B) {
+      playUnlockAnimation("B");
+      return;
+    }
+
+    // 2. ダニエルのロック解除判定（エレナがBAD_10密告者の波紋に直面し、かつ未再生の場合）
+    var isDanielTriggered = (
+      Boolean(state.unlockedEndings && state.unlockedEndings["BAD_10"]) ||
+      state.visitedNodes.indexOf("BAD_10") !== -1
+    );
+    if (isDanielTriggered && !state.seenUnlockAnim_C) {
+      playUnlockAnimation("C");
+      return;
+    }
+  }
+
+  // 428 神演出：ロック粉砕＆アンロックエナジーパルス発動
+  function playUnlockAnimation(charKey) {
+    var state = TimelineState.getState();
+    var overlayId = charKey === "B" ? "lockOverlayB" : charKey === "C" ? "lockOverlayC" : null;
+    var cardId = charKey === "B" ? "cardCharB" : charKey === "C" ? "cardCharC" : null;
+    if (!overlayId || !cardId) return;
+
+    var overlay = document.getElementById(overlayId);
+    var card = document.getElementById(cardId);
+    if (!overlay || !card) return;
+
+    // ロックオーバーレイを一時可視化し、粉砕アニメーションを発動
+    overlay.classList.remove("hidden");
+    overlay.classList.add("lock-shatter-anim");
+
+    // 重低音インパクト + 煌めきファンファーレ
+    AudioEngine.play('heavy');
+    setTimeout(function() {
+      AudioEngine.play('sparkle');
+    }, 250);
+
+    // 画面全体への白光フラッシュ
+    flashScreen();
+
+    // 告知バナーの表示
+    var bannerContainer = document.getElementById("unlockNotificationContainer");
+    if (!bannerContainer) {
+      bannerContainer = document.createElement("div");
+      bannerContainer.id = "unlockNotificationContainer";
+      bannerContainer.className = "fixed top-12 sm:top-14 left-1/2 -translate-x-1/2 z-50 pointer-events-none w-11/12 max-w-lg";
+      document.body.appendChild(bannerContainer);
+    }
+
+    var bannerText = charKey === "B"
+      ? "🔓 因果接続：レンの足掻きにより【エレナ（平等権）】の運命が解放された！"
+      : "🔓 因果接続：密告通報の悲劇（BAD_10）を回避するため【ダニエル（社会権）】の運命が解放された！";
+    var bannerColor = charKey === "B"
+      ? "bg-sky-950/95 border-sky-400 text-sky-200 shadow-sky-900/60"
+      : "bg-amber-950/95 border-amber-400 text-amber-200 shadow-amber-900/60";
+
+    bannerContainer.innerHTML =
+      '<div class="unlock-banner-anim ' + bannerColor + ' border-2 px-4 py-3 rounded-2xl shadow-2xl flex items-center justify-center gap-2.5 backdrop-blur-md">' +
+      '<span class="text-xl">⚡</span>' +
+      '<span class="font-black text-xs sm:text-sm tracking-wide">' + bannerText + '</span>' +
+      '</div>';
+
+    // 1.1秒後にオーバーレイを完全消去し、カードにエナジーパルスを付与
+    setTimeout(function() {
+      overlay.classList.add("hidden");
+      overlay.classList.remove("lock-shatter-anim");
+      card.classList.add(charKey === "B" ? "card-unlocked-glow-sky" : "card-unlocked-glow-amber");
+
+      if (charKey === "B") state.seenUnlockAnim_B = true;
+      if (charKey === "C") state.seenUnlockAnim_C = true;
+      TimelineState.saveLocal();
+    }, 1100);
+
+    // 4.5秒後にバナーを自動消去
+    setTimeout(function() {
+      if (bannerContainer) bannerContainer.innerHTML = "";
+    }, 4500);
+  }
+
+  function showToBeContinued(charKey, hourNum, titleText, messageText) {
+    AudioEngine.play('chime');
+    var modal = document.getElementById("modalToBeContinued");
+    if (!modal) return;
+
+    var cName = charKey === "A" ? "レン（自由権）" : charKey === "B" ? "エレナ（平等権）" : "ダニエル（社会権）";
+    var titleEl = document.getElementById("tbcCharTitle");
+    if (titleEl) titleEl.textContent = cName + "【第" + hourNum + "アワー】到達！";
+
+    var msgEl = document.getElementById("tbcMessage");
+    if (msgEl) msgEl.textContent = messageText || "この時間帯の行動を完了しました。他の主人公たちの時間軸を進めてください。";
+
+    modal.classList.remove("hidden");
+
+    var btn = document.getElementById("btnTbcReturnSelect");
+    if (btn) {
+      btn.onclick = function() {
+        AudioEngine.play('tap');
+        modal.classList.add("hidden");
+        switchView('auth');
+        renderTimeBlockStatus();
+      };
+    }
+  }
+
+  function showHour1Preview() {
+    AudioEngine.play("preview");
+    var modal = document.getElementById("modalHour1Preview");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+
+    var state = TimelineState.getState();
+    state.hour1PreviewSeen = true;
+    TimelineState.saveLocal();
+
+    var btn = document.getElementById("btnStartHour2FromPreview");
+    if (btn) {
+      btn.onclick = function() {
+        AudioEngine.play("tap");
+        modal.classList.add("hidden");
+        // ノベル画面を表示中の場合は、キャラ選択画面へ追い出さずその場で第2アワー選択肢へ進む！
+        var novelView = document.getElementById("viewNovel");
+        if (novelView && !novelView.classList.contains("hidden")) {
+          var bannerEl = document.getElementById("novelChapterBanner");
+          if (bannerEl) {
+            bannerEl.className = "mb-3 p-3 bg-gradient-to-r from-emerald-950/80 via-neutral-900 to-sky-950/80 border border-emerald-500/50 rounded-xl flex items-center justify-between text-xs";
+            bannerEl.innerHTML = '<span class="text-emerald-300 font-bold flex items-center gap-1.5"><span>🎬</span><span>【第1アワー突破！】次章予告編・あらすじを確認できます</span></span>'
+              + '<button id="btnChapterPreviewTrigger" class="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg font-mono font-bold cursor-pointer">PREVIEW ▶</button>';
+            bannerEl.classList.remove("hidden");
+            var trigBtn = document.getElementById("btnChapterPreviewTrigger");
+            if (trigBtn) {
+              trigBtn.onclick = function(e) {
+                e.stopPropagation();
+                showHour1Preview();
+              };
+            }
+          }
+          var tapZone = document.getElementById("novelTapZone");
+          if (tapZone) {
+            setTimeout(function() { tapZone.scrollTop = tapZone.scrollHeight; }, 60);
+          }
+        } else {
+          switchView("auth");
+          renderTimeBlockStatus();
+        }
+      };
+    }
+  }
+
+  function showHour2Preview() {
+    AudioEngine.play("preview");
+    var modal = document.getElementById("modalHour2Preview");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+
+    var state = TimelineState.getState();
+    state.hour2PreviewSeen = true;
+    TimelineState.saveLocal();
+
+    // 周回または古遺物所持判定による予告文動的切り替え
+    var hasCleared = TimelineState.hasClearedOnce();
+    var flags = state.userFlags || [];
+    var objFlags = state.flags || {};
+    var slots = state.slots || {};
+    var hasPieceA = flags.indexOf("PIECE_A") !== -1 || objFlags["PIECE_A"] || (slots["A_1030"] === "A_TAKE_PLATE");
+    var hasPieceB = flags.indexOf("PIECE_B") !== -1 || objFlags["PIECE_B"] || (slots["B_1030_ITEM"] === "B_TAKE_PLATE");
+    var hasPieceC = flags.indexOf("PIECE_C") !== -1 || objFlags["PIECE_C"] || (slots["C_1030_ITEM"] === "C_TAKE_BOX");
+    var isTrueRoute = hasCleared || hasPieceA || hasPieceB || hasPieceC;
+
+    var badgeEl = document.getElementById("hour2PreviewBadge");
+    var titleEl = document.getElementById("hour2PreviewTitle");
+    var textEl = document.getElementById("hour2PreviewText");
+    var tagsEl = document.getElementById("hour2PreviewTags");
+
+    if (isTrueRoute) {
+      if (badgeEl) {
+        badgeEl.textContent = "✦ TRUE ROUTE PREVIEW // 100年の封印解除 ✦";
+        badgeEl.className = "text-[11px] font-mono font-black text-amber-300 tracking-widest uppercase bg-gradient-to-r from-amber-950 via-yellow-900 to-amber-950 px-4 py-1.5 rounded-full border border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.5)] inline-block animate-pulse";
+      }
+      if (titleEl) {
+        titleEl.innerHTML = '<span>🎬</span><span>12:00 最終決戦予告：中央統治タワー最上階・失われた古遺物の真実</span>';
+      }
+      if (textEl) {
+        textEl.innerHTML = '見上げれば、天空を射貫く中央統治タワーの最上階。<br>'
+          + '三方に分かれた管制端末の前に立つレン、エレナ、ダニエル。<br>'
+          + '3人の目の前にそびえ立つのは、街の全機能を凍結させた巨大な「三重ロック隔壁」。<br><br>'
+          + 'なぜ3人は、同じ時刻にこの場所へと導かれたのか？<br>'
+          + 'レンが胸元に差し込んだ青い金属標板、エレナが金庫から持ち出した光学的憲法銘板、ダニエルが担いできた白い救護箱——<br>'
+          + '100年の封印を経て持ち寄られた<span class="text-amber-300 font-bold">【失われた古遺物】</span>の正体とは！？<br><br>'
+          + '立ちはだかる統治総裁オーガスト卿の冷徹な宣告。<br>'
+          + '真実の古遺物がスキャナに並び、3つの認証キーが同時に押し込まれる時、暗黒の街に隠蔽されてきた“世界の真実”が白日の下に晒される——！！';
+      }
+      if (tagsEl) {
+        tagsEl.innerHTML = '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 三重ロックの真実</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-amber-950 border border-amber-500/80 px-2 py-0.5 rounded text-amber-300"># 失われた古遺物</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 運命のトリプルシンクロ</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-amber-950 border border-amber-500/80 px-2 py-0.5 rounded text-amber-300"># 100年の封印解除</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 12:00 最終決戦</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-amber-950 border border-amber-500/80 px-2 py-0.5 rounded text-amber-300"># 真の歴史の解凍</span>';
+      }
+    } else {
+      if (badgeEl) {
+        badgeEl.textContent = "✦ HOUR 2 CLEARED // FINAL HOUR PREVIEW ✦";
+        badgeEl.className = "text-[11px] font-mono font-black text-amber-400 tracking-widest uppercase bg-amber-950/90 px-4 py-1.5 rounded-full border border-amber-500/50 inline-block animate-pulse";
+      }
+      if (titleEl) {
+        titleEl.innerHTML = '<span>🎬</span><span>12:00 最終決戦予告：中央統治タワー最上階・三重ロックの封印</span>';
+      }
+      if (textEl) {
+        textEl.innerHTML = '見上げれば、天空を射貫く中央統治タワーの最上階。<br>'
+          + '三方に分かれた管制端末の前に立つレン、エレナ、ダニエル。<br>'
+          + '3人の目の前にそびえ立つのは、街の全機能を凍結させた巨大な「三重ロック隔壁」。<br><br>'
+          + 'なぜ3人は、それぞれ異なる苦難を乗り越え、この同じ時刻に導かれたのか？<br>'
+          + '奪われた自由、歪められた平等、踏みにじられた命の尊厳——<br>'
+          + '100年の沈黙を破り、3つの信念が交錯する時、暗黒の街を支配する総裁オーガスト卿が冷徹な宣告を下す！<br>'
+          + '「スラム全域・電磁首輪一斉強制自爆まで、残り10分」——！<br><br>'
+          + '3つの端末キーが同時に押し込まれる時、暗黒の街に隠蔽されてきた“世界の真実”が白日の下に晒される——！！';
+      }
+      if (tagsEl) {
+        tagsEl.innerHTML = '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 三重ロックの真実</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 運命のトリプルシンクロ</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># オーガスト卿との対峙</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 12:00 最終決戦</span>'
+          + '<span class="text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-700 px-2 py-0.5 rounded text-neutral-300"># 奪われた権利を取り戻せ</span>';
+      }
+    }
+
+    var btn = document.getElementById("btnStartClimaxFromPreview");
+    if (btn) {
+      btn.onclick = function() {
+        AudioEngine.play("fanfare");
+        modal.classList.add("hidden");
+        var novelView = document.getElementById("viewNovel");
+        var state = TimelineState.getState();
+        if (novelView && !novelView.classList.contains("hidden") && state.currentNodeKey === "CLIMAX_HUB") {
+          var bannerEl = document.getElementById("novelChapterBanner");
+          if (bannerEl) {
+            bannerEl.className = "mb-3 p-3 bg-gradient-to-r from-amber-950/80 via-neutral-900 to-red-950/80 border border-amber-500/50 rounded-xl flex items-center justify-between text-xs";
+            bannerEl.innerHTML = '<span class="text-amber-300 font-bold flex items-center gap-1.5"><span>🎬</span><span>【第2アワー突破！】クライマックス予告編・あらすじを確認できます</span></span>'
+              + '<button id="btnChapterPreviewTrigger2" class="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg font-mono font-bold cursor-pointer">PREVIEW ▶</button>';
+            bannerEl.classList.remove("hidden");
+            var trigBtn2 = document.getElementById("btnChapterPreviewTrigger2");
+            if (trigBtn2) {
+              trigBtn2.onclick = function(e) {
+                e.stopPropagation();
+                showHour2Preview();
+              };
+            }
+          }
+          var tapZone = document.getElementById("novelTapZone");
+          if (tapZone) {
+            setTimeout(function() { tapZone.scrollTop = tapZone.scrollHeight; }, 60);
+          }
+        } else {
+          var s = state.slots || {};
+          var isTawakichi = (s["A_1150"] === "A_CALL_VOICE" && s["B_1150"] === "B_CALL_VOICE" && s["C_1150"] === "C_CALL_VOICE");
+          if (isTawakichi) {
+            GameEngine.launchNode("BONUS_TAWAKICHI");
+          } else {
+            GameEngine.launchNode("CLIMAX_HUB");
+          }
+        }
+      };
+    }
+  }
+
+  function closeHour2Preview() {
+    var modal = document.getElementById("modalHour2Preview");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function showCharWaitOption(charKey, hourNum) {
+    AudioEngine.play("tap");
+    var modal = document.getElementById("modalCharWaitOption");
+    if (!modal) return;
+
+    var cName = charKey === "A" ? "レン（自由権）" : charKey === "B" ? "エレナ（平等権）" : "ダニエル（社会権）";
+    var titleEl = document.getElementById("charWaitModalTitle");
+    if (titleEl) titleEl.textContent = cName;
+
+    var descEl = document.getElementById("charWaitModalDesc");
+    if (descEl) {
+      if (hourNum === 1) {
+        descEl.textContent = "第1アワー（10:00〜11:00）を突破し、次の作戦指示を待っています。他の主人公を進めて全員で11:00の封鎖を突破してください。";
+      } else {
+        descEl.textContent = "第2アワー（11:00〜12:00）を突破し、管制室でトリプル・シンクロを待機しています。他の主人公を進めて12:00最終決戦を開始してください。";
+      }
+    }
+
+    modal.classList.remove("hidden");
+
+    var btnScene = document.getElementById("btnCharWaitGoScene");
+    if (btnScene) {
+      btnScene.onclick = function() {
+        AudioEngine.play("tap");
+        modal.classList.add("hidden");
+        switchView("novel");
+        var nodeMap = {
+          1: { A: "A_1100", B: "B_1100", C: "C_1100" },
+          2: { A: "A_1150", B: "B_1150", C: "C_1150" }
+        };
+        GameEngine.launchNode(nodeMap[hourNum][charKey]);
+      };
+    }
+    var btnChart = document.getElementById("btnCharWaitOpenChart");
+    if (btnChart) {
+      btnChart.onclick = function() {
+        AudioEngine.play("tap");
+        modal.classList.add("hidden");
+        openChart();
+      };
+    }
+    var btnClose = document.getElementById("btnCharWaitClose");
+    if (btnClose) {
+      btnClose.onclick = function() {
+        AudioEngine.play("tap");
+        modal.classList.add("hidden");
+      };
+    }
+  }
+
+  function checkAllClearBadge() {
+    var state = TimelineState.getState();
+    var count = Object.keys(state.unlockedEndings).length;
+    var banner = document.getElementById("bannerAllClearHeader");
+    if (banner) {
+      banner.classList.toggle("hidden", count === 0);
+    }
+  }
+
+  return {
+    switchView: switchView,
+    updateHeaderTabs: updateHeaderTabs,
+    flashScreen: flashScreen,
+    shakeScreen: shakeScreen,
+    showToast: showToast,
+    showCausalityShift: showCausalityShift,
+    openTip: openTip,
+    closeTip: closeTip,
+    isTipCooldown: isTipCooldown,
+    openChart: openChart,
+    closeChart: closeChart,
+    renderChartModal: renderChartModal,
+    openTipsArchive: openTipsArchive,
+    closeTipsArchive: closeTipsArchive,
+    renderTipsArchiveModal: renderTipsArchiveModal,
+    openBadEndArchive: openBadEndArchive,
+    closeBadEndArchive: closeBadEndArchive,
+    renderBadEndArchiveModal: renderBadEndArchiveModal,
+    renderTimeBlockStatus: renderTimeBlockStatus,
+    showToBeContinued: showToBeContinued,
+    showHour1Preview: showHour1Preview,
+    showHour2Preview: showHour2Preview,
+    closeHour2Preview: closeHour2Preview,
+    showCharWaitOption: showCharWaitOption,
+    checkAllClearBadge: checkAllClearBadge,
+    applyTipLinkStyles: applyTipLinkStyles,
+    openWikiArchive: openWikiArchive,
+    closeWikiArchive: closeWikiArchive,
+    checkAndPlayUnlockAnimation: checkAndPlayUnlockAnimation,
+    playUnlockAnimation: playUnlockAnimation
+  };
+})();
+
+// 憲法マスター検定クイズコントローラー
+var QuizController = (function() {
+  var quizQuestions = [];
+  var currentIndex = 0;
+  var isAnswering = false;
+
+  function init() {
+    var btnClose = document.getElementById("btnCloseQuiz");
+    if (btnClose) {
+      btnClose.onclick = function() {
+        AudioEngine.play('tap');
+        closeQuiz();
+      };
+    }
+    var btnStart = document.getElementById("btnStartTipsQuiz");
+    if (btnStart) {
+      btnStart.onclick = function() {
+        startQuiz();
+      };
+    }
+  }
+
+  function getQuestions() {
+    if (typeof window !== "undefined" && window.TIPS_QUIZ_QUESTIONS && window.TIPS_QUIZ_QUESTIONS.length > 0) {
+      return window.TIPS_QUIZ_QUESTIONS;
+    }
+    if (typeof TIPS_QUIZ_QUESTIONS !== "undefined" && TIPS_QUIZ_QUESTIONS.length > 0) {
+      return TIPS_QUIZ_QUESTIONS;
+    }
+    return [];
+  }
+
+  function startQuiz() {
+    AudioEngine.play('chime');
+    quizQuestions = getQuestions();
+    currentIndex = 0;
+    isAnswering = false;
+
+    var totalCountEl = document.getElementById("quizTotalCount");
+    if (totalCountEl) totalCountEl.textContent = quizQuestions.length;
+
+    var modal = document.getElementById("modalQuiz");
+    if (modal) modal.classList.remove("hidden");
+    renderCurrentQuestion();
+  }
+
+  function closeQuiz() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalQuiz");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function renderCurrentQuestion() {
+    var q = quizQuestions[currentIndex];
+    if (!q) return;
+
+    isAnswering = false;
+    var idxEl = document.getElementById("quizCurrentIndex");
+    if (idxEl) idxEl.textContent = currentIndex + 1;
+
+    var catEl = document.getElementById("quizCategoryBadge");
+    if (catEl) catEl.textContent = q.category;
+
+    var textEl = document.getElementById("quizQuestionText");
+    if (textEl) textEl.textContent = q.question;
+
+    var feedbackBox = document.getElementById("quizFeedbackBox");
+    if (feedbackBox) {
+      feedbackBox.classList.add("hidden");
+      feedbackBox.innerHTML = "";
+    }
+
+    var choicesCont = document.getElementById("quizChoicesContainer");
+    if (!choicesCont) return;
+    choicesCont.innerHTML = "";
+
+    q.choices.forEach(function(choiceText, idx) {
+      var btn = document.createElement("button");
+      btn.className = "w-full p-3.5 sm:p-4 rounded-xl border border-neutral-700 bg-neutral-800/80 hover:bg-neutral-700/90 text-left text-xs sm:text-sm font-hud text-neutral-200 transition-all flex items-center justify-between gap-2 cursor-pointer shadow-md";
+      btn.innerHTML = '<span class="flex items-center gap-2.5"><span>' + ['①', '②', '③'][idx] + '</span><span>' + choiceText + '</span></span>' +
+                       '<span class="text-neutral-500 text-xs shrink-0">選択 ▶</span>';
+
+      btn.onclick = function() {
+        if (isAnswering) return;
+        isAnswering = true;
+        handleAnswer(idx);
+      };
+
+      choicesCont.appendChild(btn);
+    });
+  }
+
+  function handleAnswer(selectedIdx) {
+    var q = quizQuestions[currentIndex];
+    var isCorrect = (selectedIdx === q.correctIndex);
+    var feedbackBox = document.getElementById("quizFeedbackBox");
+    if (!feedbackBox) return;
+
+    feedbackBox.classList.remove("hidden");
+
+    if (isCorrect) {
+      AudioEngine.play('chime');
+      feedbackBox.className = "p-4 rounded-xl border border-emerald-500/70 bg-emerald-950/40 text-xs font-hud space-y-2 text-emerald-200 shadow-lg";
+      feedbackBox.innerHTML = '<div>' +
+        '<div class="font-black text-emerald-400 text-sm flex items-center gap-1.5"><span>⭕</span><span>正 解 ！</span></div>' +
+        '<p class="mt-1 text-neutral-300 leading-relaxed font-sans-jp">' + q.explanation + '</p>' +
+        '</div>' +
+        '<div class="pt-2 text-right">' +
+        '<button id="btnQuizNextAction" class="px-4 py-2 bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 text-neutral-950 font-black text-xs rounded-lg shadow cursor-pointer font-hud transition-transform active:scale-95">' +
+        (currentIndex + 1 < quizQuestions.length ? '次の問題へ進む ▶' : '🏆 全問合格！ 修了証書を受け取る ▶') +
+        '</button>' +
+        '</div>';
+
+      var nextBtn = document.getElementById("btnQuizNextAction");
+      if (nextBtn) {
+        nextBtn.onclick = function() {
+          AudioEngine.play('tap');
+          if (currentIndex + 1 < quizQuestions.length) {
+            currentIndex++;
+            renderCurrentQuestion();
+          } else {
+            // 全問合格処理
+            closeQuiz();
+            TimelineState.unlockTrophy('quizMaster');
+            CertRenderer.openModal('quizMaster');
+          }
+        };
+      }
+    } else {
+      AudioEngine.play('bad');
+      feedbackBox.className = "p-4 rounded-xl border border-rose-500/70 bg-rose-950/40 text-xs font-hud space-y-2 text-rose-200 shadow-lg";
+      feedbackBox.innerHTML = '<div>' +
+        '<div class="font-black text-rose-400 text-sm flex items-center gap-1.5"><span>❌</span><span>不 正 解 ……</span></div>' +
+        '<p class="mt-1 text-neutral-300 leading-relaxed font-sans-jp">もう一度条文と判例の解説を振り返り、再挑戦してください。</p>' +
+        '</div>' +
+        '<div class="pt-2 text-right">' +
+        '<button id="btnQuizRetryAction" class="px-4 py-2 bg-rose-800 hover:bg-rose-700 text-white font-bold text-xs rounded-lg shadow cursor-pointer font-hud transition-transform active:scale-95">もう一度解き直す 🔄</button>' +
+        '</div>';
+
+      var retryBtn = document.getElementById("btnQuizRetryAction");
+      if (retryBtn) {
+        retryBtn.onclick = function() {
+          AudioEngine.play('tap');
+          renderCurrentQuestion();
+        };
+      }
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+  return {
+    startQuiz: startQuiz,
+    closeQuiz: closeQuiz
+  };
+})();
+
+// 5大栄誉表彰状 Canvas / PDF レンダラー
+var CertRenderer = (function() {
+  var DIPLOMA_SPECS = {
+    quizMaster: {
+      mainTitle: "日本国憲法マスター 修了証書",
+      engTitle: "CONSTITUTIONAL MASTER DIPLOMA",
+      badgeText: "CONSTITUTIONAL MASTER QUALIFIED",
+      bgGradient: ["#0a0a0f", "#17150a", "#0a0a0f"],
+      lines: [
+        "貴殿は全19大 人権TIPSを完全解明し、",
+        "自由権・平等権・社会権の憲法マスター検定において極めて優秀な知見を示されました。",
+        "日本国憲法第97条が謳う『人類の多年にわたる自由獲得の成果』を胸に刻み、",
+        "人権の尊厳を守り抜く真のマスターたる見識を有することをここに証します。"
+      ],
+      achievement: "全19大人権TIPS完全解明 ＆ 憲法マスター検定全問合格"
+    },
+    shinMaster: {
+      mainTitle: "探 究 の 鬼 表 彰 状",
+      engTitle: "THE ABYSS EXPLORER DIPLOMA",
+      badgeText: "THE ABYSS OBSERVER QUALIFIED",
+      bgGradient: ["#0f0a0a", "#1a0f0f", "#0f0a0a"],
+      lines: [
+        "貴殿は23通りに及ぶ過酷なる絶望と人権喪失の結末をすべて見届け、",
+        "友レンのために散った少年シンの魂を受け継ぎました。",
+        "いかなる破滅の闇からも目を逸らさず、因果の真実を照らし抜いた",
+        "不屈の探究心と人間愛をここに称え表彰します。"
+      ],
+      achievement: "全23BAD END完全踏破 ＆ 特別外伝『エピソード・シン』読了"
+    },
+    trueEnd: {
+      mainTitle: "新 世 紀 立 憲 者 表 彰 状",
+      engTitle: "TRUE CONSTITUTIONAL ARCHITECT",
+      badgeText: "TRUE CONSTITUTIONAL ARCHITECT",
+      bgGradient: ["#0a0f14", "#0f1c24", "#0a0f14"],
+      lines: [
+        "貴殿は過酷な180分のタイムラインにおいて3つの古遺物を結集させ、",
+        "憲法第97条が謳う『永久の信託』の精神を暗黒のディストピアに解凍しました。",
+        "自由・平等・生存の三光を調和させ、新世紀の日本国憲法を創出した",
+        "偉大なる立憲の功績をここに永久に証します。"
+      ],
+      achievement: "13:00 TRUE SECRET END【東京湾の夜明け、新世紀の日本国憲法】到達"
+    },
+    normalClear: {
+      mainTitle: "人 権 調 和 表 彰 状",
+      engTitle: "CONSTITUTIONAL HARMONY DIPLOMA",
+      badgeText: "CONSTITUTIONAL HARMONY ACHIEVED",
+      bgGradient: ["#0a140f", "#0f2117", "#0a140f"],
+      lines: [
+        "貴殿は自由・平等・生存を背負う三人の主人公の意志を繋ぎ合わせ、",
+        "都市の電磁首輪を解除して新たな朝を切り拓きました。",
+        "権利相互の衝突を乗り越え、分断された社会に調和をもたらした",
+        "貴殿の勇気と決断をここに称え表彰します。"
+      ],
+      achievement: "12:30 NORMAL CLEAR【三色の光が照らす朝】到達"
+    },
+    augustMaster: {
+      mainTitle: "真 実 の 編 纂 者 表 彰 状",
+      engTitle: "CHRONICLE ARCHIVIST DIPLOMA",
+      badgeText: "CHRONICLE ARCHIVIST QUALIFIED",
+      bgGradient: ["#120a17", "#1f0f26", "#120a17"],
+      lines: [
+        "貴殿は統制庁の冷酷なる最高権力者オーガスト卿が胸に秘めていた",
+        "哀しき独白と新憲法温存の真意を看破しました。",
+        "暴君の仮面の下にあった孤独な祈りを解き明かし、",
+        "失われた歴史の表裏のすべてを編纂した見識をここに証します。"
+      ],
+      achievement: "極秘手記『SIDE_AUGUST（オーガスト卿の独白）』読了"
+    }
+  };
+
+  var currentKey = "normalClear";
+
+  function openModal(trophyKey) {
+    if (typeof trophyKey === "boolean") {
+      trophyKey = trophyKey ? "quizMaster" : "normalClear";
+    }
+    currentKey = trophyKey || "normalClear";
+    var spec = DIPLOMA_SPECS[currentKey] || DIPLOMA_SPECS.normalClear;
+
+    AudioEngine.play('chime');
+    var modal = document.getElementById("modalCertificate");
+    if (modal) modal.classList.remove("hidden");
+
+    var gradeBadge = document.getElementById("certGradeBadge");
+    var mainTitle = document.getElementById("certMainTitle");
+    if (gradeBadge) gradeBadge.textContent = spec.badgeText;
+    if (mainTitle) mainTitle.textContent = spec.mainTitle;
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function() {
+        drawCertificate(currentKey);
+      });
+    } else {
+      drawCertificate(currentKey);
+    }
+  }
+
+  function closeModal() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalCertificate");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function drawCertificate(trophyKey) {
+    var spec = DIPLOMA_SPECS[trophyKey] || DIPLOMA_SPECS.normalClear;
+    var canvas = document.getElementById("canvasCert");
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var state = TimelineState.getState();
+
+    var w = 1200;
+    var h = 840;
+    canvas.width = w;
+    canvas.height = h;
+
+    // 背景グラデーション
+    var bgGrad = ctx.createLinearGradient(0, 0, w, h);
+    bgGrad.addColorStop(0, spec.bgGradient[0]);
+    bgGrad.addColorStop(0.5, spec.bgGradient[1]);
+    bgGrad.addColorStop(1, spec.bgGradient[2]);
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // 金枠外枠（太さ 6px）
+    ctx.strokeStyle = "#eab308";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(30, 30, w - 60, h - 60);
+
+    // 金枠内枠（余白10px、太さ 2px）
+    ctx.strokeStyle = "rgba(234, 179, 8, 0.45)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(40, 40, w - 80, h - 80);
+
+    // 四隅のコーナー装飾
+    ctx.strokeStyle = "#eab308";
+    ctx.lineWidth = 3;
+    var cornerSize = 25;
+    // 左上
+    ctx.strokeRect(45, 45, cornerSize, cornerSize);
+    // 右上
+    ctx.strokeRect(w - 45 - cornerSize, 45, cornerSize, cornerSize);
+    // 左下
+    ctx.strokeRect(45, h - 45 - cornerSize, cornerSize, cornerSize);
+    // 右下
+    ctx.strokeRect(w - 45 - cornerSize, h - 45 - cornerSize, cornerSize, cornerSize);
+
+    // メインタイトル
+    ctx.fillStyle = "#fde047";
+    ctx.font = "bold 44px 'Shippori Mincho', serif";
+    ctx.textAlign = "center";
+    ctx.fillText(spec.mainTitle, w / 2, 120);
+
+    // 英文ディプロマ名
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "16px 'Zen Kaku Gothic New', sans-serif";
+    ctx.letterSpacing = "2px";
+    ctx.fillText("PARALLEL JAPANIA // " + spec.engTitle, w / 2, 160);
+
+    // 授与者名
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 32px 'Zen Kaku Gothic New', sans-serif";
+    ctx.fillText((state.studentName || "探究者") + " 殿", w / 2, 240);
+
+    // 本文（4行）
+    ctx.fillStyle = "#e2e8f0";
+    ctx.font = "20px 'Shippori Mincho', serif";
+    spec.lines.forEach(function(line, idx) {
+      ctx.fillText(line, w / 2, 320 + (idx * 40));
+    });
+
+    // 実績
+    ctx.fillStyle = "#38bdf8";
+    ctx.font = "bold 22px 'Zen Kaku Gothic New', sans-serif";
+    ctx.fillText("【達成実績】 " + spec.achievement, w / 2, 530);
+
+    // 日付・発行者
+    var today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "18px 'Zen Kaku Gothic New', sans-serif";
+    ctx.fillText(today, w / 2, 640);
+
+    ctx.fillStyle = "#eab308";
+    ctx.font = "bold 22px 'Shippori Mincho', serif";
+    ctx.fillText("パラレル・ジャパニア憲法探究委員会", w / 2, 700);
+  }
+
+  function downloadPdf() {
+    AudioEngine.play('tap');
+    var canvas = document.getElementById("canvasCert");
+    if (!canvas) return;
+
+    var spec = DIPLOMA_SPECS[currentKey] || DIPLOMA_SPECS.normalClear;
+    var filename = "Parallel_Japania_" + currentKey + ".pdf";
+
+    if (window.jspdf && window.jspdf.jsPDF) {
+      var jsPDF = window.jspdf.jsPDF;
+      var doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      var imgData = canvas.toDataURL("image/jpeg", 0.95);
+      doc.addImage(imgData, 'JPEG', 0, 0, 297, 210);
+      doc.save(filename);
+    } else {
+      var link = document.createElement('a');
+      link.download = "Parallel_Japania_" + currentKey + ".png";
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+  }
+
+  function init() {
+    var btnPdf = document.getElementById("btnDownloadPdf");
+    if (btnPdf) btnPdf.onclick = downloadPdf;
+    var btnCloseTop = document.getElementById("btnCloseCertTop");
+    if (btnCloseTop) btnCloseTop.onclick = closeModal;
+    var btnCloseBottom = document.getElementById("btnCloseCertBottom");
+    if (btnCloseBottom) btnCloseBottom.onclick = closeModal;
+
+    // クリアバナー等の表彰状ボタン結線
+    var btnFromBanner = document.getElementById("btnCertFromBanner");
+    if (btnFromBanner) {
+      btnFromBanner.onclick = function() {
+        openModal('normalClear');
+      };
+    }
+    var btnFromTrue = document.getElementById("btnCertFromTrue");
+    if (btnFromTrue) {
+      btnFromTrue.onclick = function() {
+        openModal('trueEnd');
+      };
+    }
+    var btnChartCert = document.getElementById("btnChartCertDownload");
+    if (btnChartCert) {
+      btnChartCert.onclick = function() {
+        openModal('normalClear');
+      };
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+  return {
+    openModal: openModal,
+    closeModal: closeModal,
+    downloadPdf: downloadPdf
+  };
+})();
+
+// 栄誉殿堂（5大トロフィー・表彰状ギャラリー）コントローラー
+var TrophyGallery = (function() {
+  var TROPHY_DEFS = [
+    {
+      key: "quizMaster",
+      title: "日本国憲法マスター 修了証書",
+      badgeText: "CONSTITUTIONAL MASTER",
+      desc: "全19大人権TIPS完全解明 ＆ 憲法マスター検定全問合格",
+      icon: "🎓",
+      colorBorder: "border-amber-500/70",
+      colorBg: "bg-amber-950/40",
+      colorText: "text-amber-300",
+      colorBadge: "bg-amber-950 border-amber-500/60 text-amber-300"
+    },
+    {
+      key: "shinMaster",
+      title: "探究の鬼 表彰状",
+      badgeText: "ABYSS EXPLORER",
+      desc: "全23BAD END完全踏破 ＆ 特別外伝『エピソード・シン』読了",
+      icon: "💀",
+      colorBorder: "border-rose-500/70",
+      colorBg: "bg-rose-950/40",
+      colorText: "text-rose-300",
+      colorBadge: "bg-rose-950 border-rose-500/60 text-rose-300"
+    },
+    {
+      key: "trueEnd",
+      title: "新世紀立憲者 表彰状",
+      badgeText: "TRUE ARCHITECT",
+      desc: "13:00 TRUE SECRET END【東京湾の夜明け、新世紀の日本国憲法】到達",
+      icon: "✨",
+      colorBorder: "border-sky-500/70",
+      colorBg: "bg-sky-950/40",
+      colorText: "text-sky-300",
+      colorBadge: "bg-sky-950 border-sky-500/60 text-sky-300"
+    },
+    {
+      key: "normalClear",
+      title: "人権調和 表彰状",
+      badgeText: "HARMONY ACHIEVED",
+      desc: "12:30 NORMAL CLEAR【三色の光が照らす朝】到達",
+      icon: "🕊️",
+      colorBorder: "border-emerald-500/70",
+      colorBg: "bg-emerald-950/40",
+      colorText: "text-emerald-300",
+      colorBadge: "bg-emerald-950 border-emerald-500/60 text-emerald-300"
+    },
+    {
+      key: "augustMaster",
+      title: "真実の編纂者 表彰状",
+      badgeText: "CHRONICLE ARCHIVIST",
+      desc: "極秘手記『SIDE_AUGUST（オーガスト卿の独白）』読了",
+      icon: "📜",
+      colorBorder: "border-purple-500/70",
+      colorBg: "bg-purple-950/40",
+      colorText: "text-purple-300",
+      colorBadge: "bg-purple-950 border-purple-500/60 text-purple-300"
+    }
+  ];
+
+  function init() {
+    var btnTitle = document.getElementById("btnTrophyGalleryTitle");
+    if (btnTitle) {
+      btnTitle.onclick = function() {
+        openModal();
+      };
+    }
+    var btnClose = document.getElementById("btnCloseTrophyGallery");
+    if (btnClose) {
+      btnClose.onclick = function() {
+        closeModal();
+      };
+    }
+    var modalEl = document.getElementById("modalTrophyGallery");
+    if (modalEl) {
+      modalEl.addEventListener("click", function(e) {
+        if (e.target === modalEl) closeModal();
+      });
+    }
+  }
+
+  function openModal() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalTrophyGallery");
+    if (modal) modal.classList.remove("hidden");
+    renderGallery();
+  }
+
+  function closeModal() {
+    AudioEngine.play('tap');
+    var modal = document.getElementById("modalTrophyGallery");
+    if (modal) modal.classList.add("hidden");
+  }
+
+  function renderGallery() {
+    var state = TimelineState.getState();
+    var trophies = state.trophies || {};
+
+    // 獲得数計算
+    var unlockedCount = 0;
+    TROPHY_DEFS.forEach(function(t) {
+      if (trophies[t.key]) unlockedCount++;
+    });
+
+    var badge = document.getElementById("trophyCountBadge");
+    if (badge) badge.textContent = unlockedCount + " / " + TROPHY_DEFS.length;
+
+    var grid = document.getElementById("trophyCardsGrid");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    TROPHY_DEFS.forEach(function(t) {
+      var isUnlocked = Boolean(trophies[t.key]);
+      var card = document.createElement("div");
+
+      if (isUnlocked) {
+        card.className = "p-4 rounded-2xl border " + t.colorBorder + " " + t.colorBg + " shadow-xl flex flex-col justify-between space-y-3 cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.99]";
+        card.innerHTML =
+          '<div class="flex items-start justify-between gap-2">' +
+            '<div class="flex items-center gap-2.5">' +
+              '<span class="text-2xl sm:text-3xl">' + t.icon + '</span>' +
+              '<div>' +
+                '<span class="text-[9px] font-mono font-bold px-2 py-0.5 rounded border ' + t.colorBadge + '">' + t.badgeText + '</span>' +
+                '<h4 class="text-sm sm:text-base font-black ' + t.colorText + ' font-hud mt-1">' + t.title + '</h4>' +
+              '</div>' +
+            '</div>' +
+            '<span class="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-600/50 px-2 py-0.5 rounded shrink-0">獲得済</span>' +
+          '</div>' +
+          '<p class="text-xs text-neutral-300 leading-relaxed font-sans-jp">' + t.desc + '</p>' +
+          '<div class="pt-2 border-t border-neutral-800 flex justify-between items-center text-xs">' +
+            '<span class="text-neutral-400 text-[11px]">タップで賞状を表示</span>' +
+            '<button class="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 ' + t.colorText + ' font-bold font-hud flex items-center gap-1 shadow">' +
+              '<span>賞状を見る</span><span>▶</span>' +
+            '</button>' +
+          '</div>';
+
+        card.onclick = function() {
+          CertRenderer.openModal(t.key);
+        };
+      } else {
+        card.className = "p-4 rounded-2xl border border-neutral-800 bg-neutral-950/60 shadow-inner flex flex-col justify-between space-y-3 opacity-60";
+        card.innerHTML =
+          '<div class="flex items-start justify-between gap-2">' +
+            '<div class="flex items-center gap-2.5">' +
+              '<span class="text-2xl sm:text-3xl filter grayscale opacity-40">🔒</span>' +
+              '<div>' +
+                '<span class="text-[9px] font-mono font-bold px-2 py-0.5 rounded border border-neutral-800 bg-neutral-900 text-neutral-500">LOCKED</span>' +
+                '<h4 class="text-sm sm:text-base font-black text-neutral-400 font-hud mt-1">未解明の栄誉</h4>' +
+              '</div>' +
+            '</div>' +
+            '<span class="text-[10px] font-mono text-neutral-500 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded shrink-0">未獲得</span>' +
+          '</div>' +
+          '<p class="text-xs text-neutral-500 leading-relaxed font-sans-jp">解明条件：' + t.desc + '</p>' +
+          '<div class="pt-2 border-t border-neutral-900 text-[11px] text-neutral-600 font-mono">' +
+            '条件を達成すると栄誉表彰状が解放されます' +
+          '</div>';
+      }
+
+      grid.appendChild(card);
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+  return {
+    openModal: openModal,
+    closeModal: closeModal,
+    renderGallery: renderGallery
+  };
+})();
+
+// ============================================================================
+// 【管制柱】教員用管制コックピット＆リアルタイムダッシュボード コントローラー
+// ============================================================================
+var TeacherDashboard = (function() {
+  var cachedStudents = [];
+  var currentFilter = "all";
+  var currentKeyword = "";
+
+  var autoRefreshInterval = 10000; // 10秒間隔
+  var autoRefreshTimer = null;
+  var isAutoRefreshOn = true;
+  var isTeacherMode = false;
+
+  function open() {
+    var modal = document.getElementById("modalTeacherDashboard");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    enableTeacherMode();
+    loadData(false);
+    startAutoRefresh();
+  }
+
+  function close() {
+    var modal = document.getElementById("modalTeacherDashboard");
+    if (modal) modal.classList.add("hidden");
+    stopAutoRefresh();
+  }
+
+  function enableTeacherMode() {
+    isTeacherMode = true;
+    var btnMenuAdmin = document.getElementById("btnGoTeacherDashboard");
+    if (btnMenuAdmin) btnMenuAdmin.classList.remove("hidden");
+    var bannerAdmin = document.getElementById("bannerTeacherMode");
+    if (bannerAdmin) bannerAdmin.classList.remove("hidden");
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    if (!isAutoRefreshOn) return;
+    autoRefreshTimer = setInterval(function() {
+      // 検索バーに入力フォーカスがある最中は更新を一時スキップ（入力邪魔防止）
+      var searchInput = document.getElementById("dashSearchInput");
+      if (searchInput && document.activeElement === searchInput) return;
+      loadData(true); // 静かにバックグラウンド更新
+    }, autoRefreshInterval);
+  }
+
+  function stopAutoRefresh() {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
+  }
+
+  function toggleAutoRefresh() {
+    isAutoRefreshOn = !isAutoRefreshOn;
+    var dot = document.getElementById("autoRefreshDot");
+    var text = document.getElementById("autoRefreshText");
+    if (isAutoRefreshOn) {
+      if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
+      if (text) text.textContent = "自動更新: 10秒";
+      startAutoRefresh();
+      UIController.showToast("🔄 ダッシュボードの自動更新を【10秒】で開始しました。");
+    } else {
+      if (dot) dot.className = "w-2 h-2 rounded-full bg-neutral-600";
+      if (text) text.textContent = "自動更新: OFF";
+      stopAutoRefresh();
+      UIController.showToast("⏸️ ダッシュボードの自動更新を停止しました。");
+    }
+  }
+
+  function loadData(isSilent) {
+    var loading = document.getElementById("dashLoadingNotice");
+    var grid = document.getElementById("dashStudentGrid");
+    var empty = document.getElementById("dashEmptyNotice");
+    if (!isSilent) {
+      if (loading) loading.classList.remove("hidden");
+      if (grid) grid.classList.add("hidden");
+      if (empty) empty.classList.add("hidden");
+    }
+
+    if (typeof google !== "undefined" && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(res) {
+          if (res && res.status === "success") {
+            renderDashboard(res);
+          } else {
+            if (!isSilent) UIController.showToast("⚠️ データ取得に失敗しました: " + (res ? res.message : "不明なエラー"));
+            if (loading) loading.classList.add("hidden");
+          }
+        })
+        .withFailureHandler(function(err) {
+          if (!isSilent) UIController.showToast("⚠️ 通信エラー: " + err);
+          if (loading) loading.classList.add("hidden");
+        })
+        .getTeacherDashboardData("9999");
+    } else {
+      // ローカルプレビュー環境用：リアルなクラス40名モックシミュレーション
+      setTimeout(function() {
+        var mockData = generateMockClassData();
+        renderDashboard(mockData);
+      }, isSilent ? 0 : 300);
+    }
+  }
+
+  function generateMockClassData() {
+    var sampleNames = [
+      "ササキ アツシ", "サトウ レン", "スズキ エレナ", "タナカ ダニエル", "ワタナベ シン",
+      "イトウ マーサ", "ナカムラ ゴードン", "コバヤシ エマ", "カトウ ヨシト", "ヨシダ サクラ",
+      "ヤマダ タロウ", "ササキ ハナコ", "ヤマグチ カズヤ", "マツモト ユウキ", "イノウエ カレン",
+      "キムラ ソラ", "ハヤシ タイキ", "シミズ ミオ", "ヤマザキ ハルト", "イケダ ユイ",
+      "アベ リュウセイ", "ハシモト アヤカ", "モリ ヒナタ", "イシカワ コウキ", "ナカジマ リコ",
+      "マエダ アスカ", "フジタ リク", "オガワ メイ", "ゴトウ レオ", "ムラカミ リン"
+    ];
+    var students = [];
+    var badEndStats = { "BAD_02": 4, "BAD_01": 2, "BAD_10": 3 };
+    var now = new Date();
+
+    sampleNames.forEach(function(name, i) {
+      var isSos = (i === 1 || i === 6 || i === 12);
+      var isClear = (i === 0 || i === 4);
+      var char = ["A: レン", "B: エレナ", "C: ダニエル"][i % 3];
+      var scene = isSos ? "BAD_02 濁流への水葬" : (isClear ? "13:00 新世紀憲法" : "11:15 街頭ビジョン");
+      var node = isSos ? "BAD_02" : (isClear ? "TRUE_SECRET_END" : "A_1115");
+      students.push({
+        name: name,
+        passcode: String(1000 + i * 137).substring(0, 4),
+        currentChar: char,
+        sceneTitle: scene,
+        currentNodeKey: node,
+        progressText: (i * 2) + " / 28 結末",
+        badEndCount: isSos ? 3 : (i % 2),
+        masteredCount: isClear ? 10 : (i % 6),
+        isCleared: isClear,
+        isSos: isSos,
+        lastUpdatedFormatted: "13:" + (20 + (i % 10)) + ":00"
+      });
+    });
+
+    return {
+      status: "success",
+      students: students,
+      summary: {
+        total: students.length,
+        sosCount: 3,
+        trueEndAchieved: 2,
+        totalTipsMastered: 86,
+        badEndStats: badEndStats
+      }
+    };
+  }
+
+  function renderDashboard(res) {
+    cachedStudents = res.students || [];
+    var sum = res.summary || {};
+
+    // 統計サマリー更新
+    var elTotal = document.getElementById("dashTotalStudents");
+    if (elTotal) elTotal.textContent = sum.total || cachedStudents.length;
+    var elSos = document.getElementById("dashSosCount");
+    if (elSos) elSos.textContent = sum.sosCount || 0;
+    var elMaster = document.getElementById("dashTotalMastered");
+    if (elMaster) elMaster.textContent = sum.totalTipsMastered || 0;
+    var elClear = document.getElementById("dashTrueEndCount");
+    if (elClear) elClear.textContent = sum.trueEndAchieved || 0;
+
+    applyFilterAndRender();
+  }
+
+  function applyFilterAndRender() {
+    var loading = document.getElementById("dashLoadingNotice");
+    var grid = document.getElementById("dashStudentGrid");
+    var empty = document.getElementById("dashEmptyNotice");
+    if (loading) loading.classList.add("hidden");
+
+    var filtered = cachedStudents.filter(function(st) {
+      if (currentFilter === "sos" && !st.isSos) return false;
+      if (currentFilter === "clear" && !st.isCleared) return false;
+      if (currentKeyword) {
+        var kw = currentKeyword.toLowerCase();
+        var matchName = (st.name || "").toLowerCase().indexOf(kw) !== -1;
+        var matchPass = (st.passcode || "").indexOf(kw) !== -1;
+        if (!matchName && !matchPass) return false;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      if (grid) grid.classList.add("hidden");
+      if (empty) empty.classList.remove("hidden");
+      return;
+    }
+
+    if (empty) empty.classList.add("hidden");
+    if (grid) {
+      grid.classList.remove("hidden");
+      grid.innerHTML = "";
+
+      filtered.forEach(function(st) {
+        var card = document.createElement("div");
+        var borderClass = st.isSos
+          ? "border-rose-500/80 bg-rose-950/20 shadow-[0_0_12px_rgba(244,63,94,0.3)] animate-pulse"
+          : (st.isCleared
+            ? "border-amber-400/80 bg-amber-950/20 shadow-[0_0_10px_rgba(251,191,36,0.2)]"
+            : "border-neutral-800 bg-neutral-900/90 hover:border-neutral-700");
+
+        card.className = "p-3.5 rounded-xl border transition-all space-y-2 text-left " + borderClass;
+
+        var statusBadge = st.isSos
+          ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-500 text-neutral-950">⚠️ SOS停滞</span>'
+          : (st.isCleared
+            ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-400 text-neutral-950">🏆 完走制覇</span>'
+            : '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-neutral-800 text-emerald-400 border border-emerald-900">▶ 進行中</span>');
+
+        var adviceHtml = "";
+        if (st.isSos) {
+          adviceHtml = '<div class="mt-2 p-2 rounded-lg bg-rose-900/40 border border-rose-800/80 text-[10px] text-rose-200">' +
+            '💡 <strong>指導指針:</strong> BAD END停滞中。別時間軸の選択肢（ダニエルの水門・配電）を見直すよう声かけしてください。' +
+            '</div>';
+        }
+
+        card.innerHTML =
+          '<div class="flex justify-between items-start gap-1">' +
+            '<div>' +
+              '<div class="text-xs font-black text-white">' + escapeHtml(st.name) + '</div>' +
+              '<div class="text-[11px] font-mono text-amber-300 font-bold tracking-widest mt-0.5">PASS: ' + escapeHtml(st.passcode) + '</div>' +
+            '</div>' +
+            '<div>' + statusBadge + '</div>' +
+          '</div>' +
+          '<div class="pt-1 border-t border-neutral-800/80 text-[11px] space-y-1">' +
+            '<div class="flex items-center justify-between text-neutral-300">' +
+              '<span class="font-bold text-neutral-400">現在地:</span>' +
+              '<span class="truncate max-w-[130px] font-mono text-sky-300" title="' + escapeHtml(st.sceneTitle) + '">' + escapeHtml(st.sceneTitle || st.currentNodeKey) + '</span>' +
+            '</div>' +
+            '<div class="flex items-center justify-between text-neutral-400">' +
+              '<span>🌸 TIPS正解: <strong class="text-pink-400">' + st.masteredCount + '</strong>問</span>' +
+              '<span>💀 被弾: <strong class="text-neutral-300">' + st.badEndCount + '</strong>回</span>' +
+            '</div>' +
+            '<div class="text-[10px] text-neutral-500 text-right font-mono">更新: ' + escapeHtml(st.lastUpdatedFormatted || "--:--") + '</div>' +
+          '</div>' +
+          adviceHtml;
+
+        grid.appendChild(card);
+      });
+    }
+  }
+
+  function escapeHtml(str) {
+    if (!str) return "";
+    return String(str).replace(/[&<>"']/g, function(m) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+    });
+  }
+
+  function init() {
+    var btnClose = document.getElementById("btnCloseTeacherDashboard");
+    if (btnClose) btnClose.onclick = close;
+
+    var btnRefresh = document.getElementById("btnRefreshTeacherDashboard");
+    if (btnRefresh) {
+      btnRefresh.onclick = function() {
+        AudioEngine.play('tap');
+        loadData(false);
+      };
+    }
+
+    var btnAutoRef = document.getElementById("btnToggleAutoRefresh");
+    if (btnAutoRef) {
+      btnAutoRef.onclick = function() {
+        AudioEngine.play('tap');
+        toggleAutoRefresh();
+      };
+    }
+
+    var btnPlay = document.getElementById("btnTeacherTestPlay");
+    if (btnPlay) {
+      btnPlay.onclick = function() {
+        AudioEngine.play('tap');
+        enableTeacherMode();
+        close();
+        if (typeof displayCharSelect === "function") {
+          displayCharSelect();
+        }
+      };
+    }
+
+    var btnMenuAdmin = document.getElementById("btnGoTeacherDashboard");
+    if (btnMenuAdmin) {
+      btnMenuAdmin.onclick = function() {
+        AudioEngine.play('tap');
+        var floatMenu = document.getElementById("headerFloatingMenu");
+        if (floatMenu) floatMenu.classList.add("hidden");
+        open();
+      };
+    }
+
+    var btnBannerAdmin = document.getElementById("btnBannerToTeacher");
+    if (btnBannerAdmin) {
+      btnBannerAdmin.onclick = function() {
+        AudioEngine.play('tap');
+        open();
+      };
+    }
+
+    var searchInput = document.getElementById("dashSearchInput");
+    if (searchInput) {
+      searchInput.oninput = function() {
+        currentKeyword = searchInput.value.trim();
+        applyFilterAndRender();
+      };
+    }
+
+    var filterBtns = document.querySelectorAll(".dash-filter-btn");
+    filterBtns.forEach(function(btn) {
+      btn.onclick = function() {
+        AudioEngine.play('tap');
+        filterBtns.forEach(function(b) {
+          b.className = "dash-filter-btn px-3 py-1.5 rounded-lg font-bold bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700 transition-all cursor-pointer";
+        });
+        btn.className = "dash-filter-btn px-3 py-1.5 rounded-lg font-bold bg-amber-500 text-neutral-950 border border-amber-400 transition-all cursor-pointer";
+        currentFilter = btn.getAttribute("data-filter") || "all";
+        applyFilterAndRender();
+      };
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+  return {
+    open: open,
+    close: close,
+    refresh: loadData
+  };
+})();
+
+// ============================================================================
+// 【旋律柱】旋律図鑑（サウンドトラック＆効果音アーカイブ）モジュール
+// ============================================================================
+var SoundtrackGallery = (function() {
+  var isModalOpen = false;
+  var tapCooldownUntil = 0;
+  var currentTab = "bgm"; // "bgm" | "se"
+  var sePlayingTimeout = null;
+
+  var TRACK_DEFS = [
+    {
+      key: "title",
+      title: "閉塞のディストピア",
+      sub: "タイトル・オープニング",
+      icon: "🏛️",
+      tag: "THEME // OP",
+      bpm: "64 BPM / Key: Dm",
+      desc: "冷徹な鉄と配給の静寂。36.71Hz超低域ドローンと冷たい金属鐘が支配の暗黒を告げる。",
+      border: "border-neutral-700",
+      accent: "text-neutral-300"
+    },
+    {
+      key: "menu",
+      title: "時空管制室オペレーション",
+      sub: "因果管制コックピット・主人公選択",
+      icon: "🛰️",
+      tag: "COMMAND // SELECT",
+      bpm: "120 BPM / Key: Am",
+      desc: "3つの時間軸を俯瞰するオペレーターの知的緊張感。ピンポン風サイバーパルス。",
+      border: "border-sky-500/60",
+      accent: "text-sky-300"
+    },
+    {
+      key: "ren",
+      title: "反逆のパルス",
+      sub: "主人公A：レン編（自由権）",
+      icon: "⚡",
+      tag: "LIBERTY // ACT-A",
+      bpm: "138 BPM / Key: Fm",
+      desc: "スラムを駆け抜ける16分鋸歯状波パルスベースと、首輪を拒絶する魂の叫び。",
+      border: "border-emerald-500/60",
+      accent: "text-emerald-300"
+    },
+    {
+      key: "elena",
+      title: "白銀の矜持",
+      sub: "主人公B：エレナ編（平等権）",
+      icon: "❄️",
+      tag: "EQUALITY // ACT-B",
+      bpm: "116 BPM / Key: Bbm",
+      desc: "貴族街の冷酷な制度と葛藤。高潔な三角波ストリングスが描く信念の旋律。",
+      border: "border-sky-400/60",
+      accent: "text-sky-300"
+    },
+    {
+      key: "daniel",
+      title: "命のトリアージ",
+      sub: "主人公C：ダニエル編（社会権）",
+      icon: "🩺",
+      tag: "SURVIVAL // ACT-C",
+      bpm: "96 BPM / Key: Fm",
+      desc: "トクン…トクン…と脈打つ心拍パルスと、一人も患者を見捨てない哀愁の深層チェロ。",
+      border: "border-amber-500/60",
+      accent: "text-amber-300"
+    },
+    {
+      key: "climax",
+      title: "立憲の解放",
+      sub: "12:00〜12:30 クライマックス合流",
+      icon: "⚔️",
+      tag: "CONVERGENCE // CLIMAX",
+      bpm: "138 BPM / Key: Fm➔F",
+      desc: "頂上で交錯した3つの誓約。三管合奏の大サビから長調（Fmaj7）の光へ解決する希望。",
+      border: "border-amber-400/70",
+      accent: "text-amber-300"
+    },
+    {
+      key: "tawakichi",
+      title: "タワ吉の憂鬱 〜全自動モップ大爆走！〜",
+      sub: "おまけ劇場 EXTRA（隠しボーナス）",
+      icon: "🐱",
+      tag: "EXTRA // TAWAKICHI",
+      bpm: "152 BPM / Key: C Maj",
+      desc: "8bitファミコン矩形波＆マリオ風スタッカート・ウォーキングベース！泡まみれ喜劇！",
+      border: "border-yellow-400",
+      accent: "text-yellow-300"
+    },
+    {
+      key: "ending",
+      title: "憲法第97条 〜恒久の夜明け〜",
+      sub: "13:00 TRUE SECRET END（真結末）",
+      icon: "🌅",
+      tag: "GRAND FINALE // TRUE END",
+      bpm: "122 BPM / Key: C Maj",
+      desc: "王道カノン進行と澄み渡るベルの凱歌。東京湾の朝焼けと青空に響き渡る感動のハイC！",
+      border: "border-amber-300",
+      accent: "text-amber-200"
+    }
+  ];
+
+  var SE_DEFS = [
+    {
+      key: "causality",
+      title: "因果変転 // バタフライ・エフェクト",
+      sub: "428風 因果波及・運命変転チャイム",
+      icon: "🦋",
+      tag: "EFFECT // CAUSALITY",
+      meta: "7-Tone Arpeggio / Sine & Triangle",
+      desc: "1人の些細な決断が別視点の運命を激変させる、バタフライ・エフェクトの神秘的な煌めき。",
+      border: "border-sky-500/60",
+      accent: "text-sky-300"
+    },
+    {
+      key: "preview",
+      title: "運命の秒針 // 428タイムライン・ジングル",
+      sub: "緊迫の電脳シンセジングル",
+      icon: "⏱️",
+      tag: "JINGLE // TIMELINE",
+      meta: "Bass Pulse + Square Lead + Chime",
+      desc: "428サウンドノベルの真髄。時間軸の交錯と次なる刻限の切迫を告げる電脳ジングル。",
+      border: "border-amber-500/60",
+      accent: "text-amber-300"
+    },
+    {
+      key: "jump",
+      title: "時空跳躍 // BAD END JUMP",
+      sub: "因果巻き戻し・タイムライン跳躍音",
+      icon: "🔀",
+      tag: "WARP // CHRONO JUMP",
+      meta: "180Hz➔720Hz Triangle Sweep (0.28s)",
+      desc: "絶望のBAD ENDから過去の分岐点へと時空を跳躍し、運命を書き換えるための転移パルス。",
+      border: "border-purple-500/60",
+      accent: "text-purple-300"
+    },
+    {
+      key: "badend",
+      title: "破滅の烙印 // 絶望の重低音",
+      sub: "BAD END 暗転カットイン重低音",
+      icon: "💀",
+      tag: "DOOM // SUB-BASS",
+      meta: "110Hz➔45Hz Sawtooth Shock (0.60s)",
+      desc: "0.5秒の暗転と共に叩きつけられる、選択の誤謬と冷酷なる運命の終焉。",
+      border: "border-rose-500/60",
+      accent: "text-rose-300"
+    },
+    {
+      key: "flatline",
+      title: "停止した生命 // フラットライン",
+      sub: "心電図完全停止・医療崩壊シグナル",
+      icon: "📉",
+      tag: "MEDICAL // SURVIVAL ZERO",
+      meta: "880Hz Sine Continuous Tone (1.40s)",
+      desc: "社会権（生存権）剥奪の象徴。スラムの電源喪失と、冷酷に響き渡る心電図の途絶音。",
+      border: "border-red-500/60",
+      accent: "text-red-300"
+    },
+    {
+      key: "heartbeat",
+      title: "生存の鼓動 // トリアージ・ハートビート",
+      sub: "緊迫の生体心音（ドクン……）",
+      icon: "💓",
+      tag: "VITAL // CARDIAC PULSE",
+      meta: "75Hz➔45Hz / 65Hz➔38Hz Dual Sine",
+      desc: "「生きたい」と足掻く患者の命と、一人も死なせないと誓うダニエルの胸の高鳴り。",
+      border: "border-emerald-500/60",
+      accent: "text-emerald-300"
+    },
+    {
+      key: "keepout",
+      title: "絶対封鎖 // KEEP OUT 警報",
+      sub: "時間軸防壁・進入禁止サイレン",
+      icon: "🚧",
+      tag: "ALERT // TIME BARRIER",
+      meta: "140Hz➔90Hz Sawtooth Alarm (0.32s)",
+      desc: "他視点の進行が揃うまで先を許さない、冷徹なるタイムラインの閉鎖プロトコル。",
+      border: "border-amber-400/60",
+      accent: "text-amber-300"
+    },
+    {
+      key: "scan",
+      title: "古遺物解析 // レリック・スキャナー",
+      sub: "電磁光学解析・データスキャン音",
+      icon: "🔍",
+      tag: "SCAN // RELIC SCAN",
+      meta: "320Hz➔1280Hz Sine Linear Sweep (0.40s)",
+      desc: "12:15、黄金のプレートに刻まれた古の英知「日本国憲法」の記憶を読み解く解析ビーム。",
+      border: "border-cyan-500/60",
+      accent: "text-cyan-300"
+    },
+    {
+      key: "pen_sketch",
+      title: "抵抗の筆跡 // ガラスの合図音",
+      sub: "万年筆による展望ガラス摩擦音",
+      icon: "🖋️",
+      tag: "SIGNAL // PEN SKETCH",
+      meta: "850Hz〜1350Hz Sawtooth Friction (3-Burst)",
+      desc: "少年シンが父の形見の万年筆で展望ガラスに刻みつけた、自由を呼ぶ希望のスケッチ音。",
+      border: "border-yellow-500/60",
+      accent: "text-yellow-300"
+    },
+    {
+      key: "chime",
+      title: "立憲の凱歌 // プレッジ・チャイム",
+      sub: "調和達成・真理到達ファンファーレ",
+      icon: "🔔",
+      tag: "TRIUMPH // PLEDGE CHIME",
+      meta: "C5➔E5➔G5➔C6 Sine Arpeggio (0.78s)",
+      desc: "三大基本的人権が調和し、東京湾の夜明けとともに新たな世紀が開かれた祝鐘。",
+      border: "border-amber-300",
+      accent: "text-amber-200"
+    },
+    {
+      key: "tap",
+      title: "決断の打鍵 // オペレーション・タップ",
+      sub: "管制コンソール・UI決定クリック音",
+      icon: "👆",
+      tag: "INPUT // SYSTEM TAP",
+      meta: "540Hz➔880Hz Sine Micro-Click (0.05s)",
+      desc: "因果管制卓のキーを叩き、主人公たちの新たな選択を決定づける確かな指先。",
+      border: "border-neutral-600",
+      accent: "text-neutral-300"
+    },
+    {
+      key: "tawakichi_foam",
+      title: "純白の泡噴射 // シャンプー・バースト",
+      sub: "タワ吉の低刺激性高圧泡スプレー",
+      icon: "🫧",
+      tag: "EXTRA // FOAM JET",
+      meta: "Bandpass Noise Sweep (2200Hz➔800Hz)",
+      desc: "「超巨大・不燃ゴミ」オーガスト卿の高級スーツを真っ白に染め上げた猛烈な泡噴射音！",
+      border: "border-blue-400",
+      accent: "text-blue-300"
+    },
+    {
+      key: "tawakichi_mop",
+      title: "爆走モップ // キュッキュッ・ポリッシュ",
+      sub: "タワ吉の超高速回転モップ磨き上げ",
+      icon: "🧹",
+      tag: "EXTRA // SPEED MOP",
+      meta: "1300Hz➔2600Hz Dual Triangle Chirp",
+      desc: "頭からつま先までピカピカに磨き上げる！フローラルの香りと共に響く小気味良い摩擦音！",
+      border: "border-yellow-400",
+      accent: "text-yellow-300"
+    }
+  ];
+
+  function isUnlocked() {
+    var state = (typeof TimelineState !== "undefined") ? TimelineState.getState() : null;
+    if (!state) return false;
+    var slots = state.slots || {};
+    var visited = state.visitedNodes || [];
+    var endings = state.unlockedEndings || {};
+    return Boolean(
+      slots["BONUS_TAWAKICHI_CLEARED"] === "CLEARED" ||
+      visited.indexOf("BONUS_TAWAKICHI") !== -1 ||
+      endings["BONUS_TAWAKICHI"]
+    );
+  }
+
+  function checkUnlockStatus() {
+    var unlocked = isUnlocked();
+    var btnHeader = document.getElementById("btnSoundtrack");
+    if (btnHeader) {
+      btnHeader.classList.toggle("hidden", !unlocked);
+    }
+    var btnCockpit = document.getElementById("btnCockpitSoundtrack");
+    if (btnCockpit) {
+      btnCockpit.classList.toggle("hidden", !unlocked);
+    }
+    return unlocked;
+  }
+
+  function switchTab(tab) {
+    if (currentTab === tab) return;
+    currentTab = tab;
+    var tabBgm = document.getElementById("tabSoundtrackBGM");
+    var tabSe = document.getElementById("tabSoundtrackSE");
+    if (tabBgm && tabSe) {
+      if (currentTab === "bgm") {
+        tabBgm.className = "px-4 py-2 text-xs font-black rounded-t-xl border-t border-x border-amber-500/80 bg-neutral-900 text-amber-300 flex items-center gap-1.5 transition-all cursor-pointer";
+        tabSe.className = "px-4 py-2 text-xs font-bold rounded-t-xl border-t border-x border-transparent bg-transparent hover:bg-neutral-900/60 text-neutral-400 hover:text-neutral-200 flex items-center gap-1.5 transition-all cursor-pointer";
+      } else {
+        tabSe.className = "px-4 py-2 text-xs font-black rounded-t-xl border-t border-x border-amber-500/80 bg-neutral-900 text-amber-300 flex items-center gap-1.5 transition-all cursor-pointer";
+        tabBgm.className = "px-4 py-2 text-xs font-bold rounded-t-xl border-t border-x border-transparent bg-transparent hover:bg-neutral-900/60 text-neutral-400 hover:text-neutral-200 flex items-center gap-1.5 transition-all cursor-pointer";
+      }
+    }
+    render();
+    if (typeof AudioEngine !== "undefined" && AudioEngine.play) {
+      AudioEngine.play('tap');
+    }
+  }
+
+  function renderBGMList(container, currentKey) {
+    TRACK_DEFS.forEach(function(track) {
+      var isPlaying = (track.key === currentKey);
+      var card = document.createElement("div");
+      card.className = "p-3.5 sm:p-4 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 " +
+        (isPlaying
+          ? "bg-amber-950/40 border-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.25)]"
+          : "bg-neutral-950/70 border-neutral-800 hover:border-neutral-700");
+
+      var left = document.createElement("div");
+      left.className = "flex items-start gap-3 min-w-0 flex-1";
+
+      var iconEl = document.createElement("div");
+      iconEl.className = "w-10 h-10 rounded-xl bg-neutral-900 border " + (isPlaying ? "border-amber-400 text-amber-300 animate-pulse" : "border-neutral-700 text-neutral-300") +
+        " flex items-center justify-center text-xl shrink-0";
+      iconEl.textContent = track.icon;
+
+      var textWrap = document.createElement("div");
+      textWrap.className = "space-y-0.5 min-w-0";
+
+      var tagLine = document.createElement("div");
+      tagLine.className = "flex items-center gap-1.5 text-[9px] font-mono";
+      tagLine.innerHTML = '<span class="px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 font-bold text-amber-400">' + track.tag + '</span>' +
+        '<span class="text-neutral-400">' + track.bpm + '</span>';
+
+      var titleEl = document.createElement("div");
+      titleEl.className = "font-black text-sm text-white font-hud " + (isPlaying ? "text-amber-300" : "");
+      titleEl.textContent = track.title;
+
+      var descEl = document.createElement("div");
+      descEl.className = "text-[11px] text-neutral-400 line-clamp-2 leading-relaxed";
+      descEl.textContent = track.desc;
+
+      textWrap.appendChild(tagLine);
+      textWrap.appendChild(titleEl);
+      textWrap.appendChild(descEl);
+      left.appendChild(iconEl);
+      left.appendChild(textWrap);
+
+      var right = document.createElement("div");
+      right.className = "w-full sm:w-auto shrink-0 pt-1 sm:pt-0";
+
+      var playBtn = document.createElement("button");
+      playBtn.className = "w-full sm:w-auto px-4 py-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer " +
+        (isPlaying
+          ? "bg-amber-400 text-neutral-950 shadow-md font-hud animate-pulse"
+          : "bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700");
+      playBtn.innerHTML = isPlaying ? '<span>▶ 演奏中</span><span class="text-[10px]">ılı</span>' : '<span>▶ 演奏する</span>';
+
+      playBtn.onclick = function() {
+        if (typeof AudioEngine !== "undefined" && AudioEngine.playBGM) {
+          AudioEngine.playBGM(track.key);
+          render();
+        }
+      };
+
+      right.appendChild(playBtn);
+      card.appendChild(left);
+      card.appendChild(right);
+      container.appendChild(card);
+    });
+  }
+
+  function renderSEList(container) {
+    SE_DEFS.forEach(function(se) {
+      var card = document.createElement("div");
+      card.className = "p-3.5 sm:p-4 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-neutral-950/70 border-neutral-800 hover:border-neutral-700";
+
+      var left = document.createElement("div");
+      left.className = "flex items-start gap-3 min-w-0 flex-1";
+
+      var iconEl = document.createElement("div");
+      iconEl.className = "w-10 h-10 rounded-xl bg-neutral-900 border border-neutral-700 text-neutral-300 flex items-center justify-center text-xl shrink-0 transition-transform";
+      iconEl.textContent = se.icon;
+
+      var textWrap = document.createElement("div");
+      textWrap.className = "space-y-0.5 min-w-0";
+
+      var tagLine = document.createElement("div");
+      tagLine.className = "flex items-center gap-1.5 text-[9px] font-mono";
+      tagLine.innerHTML = '<span class="px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 font-bold ' + se.accent + '">' + se.tag + '</span>' +
+        '<span class="text-neutral-400">' + se.meta + '</span>';
+
+      var titleEl = document.createElement("div");
+      titleEl.className = "font-black text-sm text-white font-hud flex items-center flex-wrap gap-1.5";
+      titleEl.innerHTML = '<span>' + se.title + '</span><span class="text-[10px] font-normal text-neutral-400">(' + se.sub + ')</span>';
+
+      var descEl = document.createElement("div");
+      descEl.className = "text-[11px] text-neutral-400 line-clamp-2 leading-relaxed";
+      descEl.textContent = se.desc;
+
+      textWrap.appendChild(tagLine);
+      textWrap.appendChild(titleEl);
+      textWrap.appendChild(descEl);
+      left.appendChild(iconEl);
+      left.appendChild(textWrap);
+
+      var right = document.createElement("div");
+      right.className = "w-full sm:w-auto shrink-0 pt-1 sm:pt-0";
+
+      var playBtn = document.createElement("button");
+      playBtn.className = "w-full sm:w-auto px-4 py-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 active:scale-95";
+      playBtn.innerHTML = '<span>🔊 試聴する</span>';
+
+      playBtn.onclick = function() {
+        if (typeof AudioEngine !== "undefined" && AudioEngine.play) {
+          AudioEngine.play(se.key);
+          iconEl.classList.add("scale-125");
+          playBtn.classList.add("bg-amber-400", "text-neutral-950", "border-amber-400");
+          playBtn.classList.remove("bg-neutral-800", "text-neutral-200");
+          playBtn.innerHTML = '<span>🔊 再生中</span><span class="text-[10px]">✨</span>';
+
+          var nowPlayingText = document.getElementById("soundtrackNowPlaying");
+          var liveIcon = document.getElementById("soundtrackLiveIcon");
+          if (nowPlayingText) {
+            nowPlayingText.textContent = "🔊 " + se.title;
+            nowPlayingText.className = "font-bold " + se.accent + " font-hud truncate";
+            if (liveIcon) liveIcon.classList.remove("opacity-20");
+          }
+
+          if (sePlayingTimeout) clearTimeout(sePlayingTimeout);
+          sePlayingTimeout = setTimeout(function() {
+            sePlayingTimeout = null;
+            iconEl.classList.remove("scale-125");
+            playBtn.classList.remove("bg-amber-400", "text-neutral-950", "border-amber-400");
+            playBtn.classList.add("bg-neutral-800", "text-neutral-200");
+            playBtn.innerHTML = '<span>🔊 試聴する</span>';
+            // BGMのステータス表示を復旧
+            renderNowPlayingStatus();
+          }, 1200);
+        }
+      };
+
+      right.appendChild(playBtn);
+      card.appendChild(left);
+      card.appendChild(right);
+      container.appendChild(card);
+    });
+  }
+
+  function renderNowPlayingStatus() {
+    var currentKey = (typeof AudioEngine !== "undefined" && AudioEngine.getCurrentBgm) ? AudioEngine.getCurrentBgm() : null;
+    var nowPlayingText = document.getElementById("soundtrackNowPlaying");
+    var liveIcon = document.getElementById("soundtrackLiveIcon");
+    if (!nowPlayingText) return;
+
+    var currentTrackDef = null;
+    for (var i = 0; i < TRACK_DEFS.length; i++) {
+      if (TRACK_DEFS[i].key === currentKey) {
+        currentTrackDef = TRACK_DEFS[i];
+        break;
+      }
+    }
+    if (currentTrackDef) {
+      nowPlayingText.textContent = currentTrackDef.icon + " " + currentTrackDef.title + " (" + currentTrackDef.bpm + ")";
+      nowPlayingText.className = "font-bold text-amber-300 font-hud truncate";
+      if (liveIcon) liveIcon.classList.remove("opacity-20");
+    } else {
+      nowPlayingText.textContent = "（停止中）";
+      nowPlayingText.className = "font-bold text-neutral-500 font-hud truncate";
+      if (liveIcon) liveIcon.classList.add("opacity-20");
+    }
+  }
+
+  function render() {
+    var container = document.getElementById("soundtrackTrackList");
+    if (!container) return;
+    container.innerHTML = "";
+
+    var currentKey = (typeof AudioEngine !== "undefined" && AudioEngine.getCurrentBgm) ? AudioEngine.getCurrentBgm() : null;
+    if (!sePlayingTimeout) {
+      renderNowPlayingStatus();
+    }
+
+    if (currentTab === "bgm") {
+      renderBGMList(container, currentKey);
+    } else {
+      renderSEList(container);
+    }
+  }
+
+  function openModal() {
+    var now = Date.now();
+    if (now < tapCooldownUntil) return;
+    tapCooldownUntil = now + 350;
+
+    checkUnlockStatus();
+    var modal = document.getElementById("modalSoundtrack");
+    if (modal) {
+      modal.classList.remove("hidden");
+      isModalOpen = true;
+      render();
+    }
+    if (typeof AudioEngine !== "undefined" && AudioEngine.play) {
+      AudioEngine.play('tap');
+    }
+  }
+
+  function closeModal() {
+    var modal = document.getElementById("modalSoundtrack");
+    if (modal) {
+      modal.classList.add("hidden");
+      isModalOpen = false;
+    }
+    if (typeof AudioEngine !== "undefined" && AudioEngine.play) {
+      AudioEngine.play('tap');
+    }
+  }
+
+  return {
+    openModal: openModal,
+    closeModal: closeModal,
+    render: render,
+    switchTab: switchTab,
+    isUnlocked: isUnlocked,
+    checkUnlockStatus: checkUnlockStatus
+  };
+})();
+
+// スチル全画面拡大ライトボックスコントローラー（十一柱 意匠柱・現場柱監修）
+var StillLightbox = (function() {
+  var tapCooldownUntil = 0;
+
+  function open(imgSrc, captionText) {
+    var now = Date.now();
+    if (now < tapCooldownUntil) return;
+    tapCooldownUntil = now + 350;
+
+    var modal = document.getElementById("modalStillLightbox");
+    var img = document.getElementById("lightboxImage");
+    var cap = document.getElementById("lightboxCaption");
+    if (!modal || !img) return;
+
+    img.src = imgSrc || "";
+    if (cap) {
+      cap.innerHTML = captionText || "";
+      cap.classList.toggle("hidden", !captionText);
+    }
+    modal.classList.remove("hidden");
+    if (typeof AudioEngine !== "undefined" && AudioEngine.play) {
+      AudioEngine.play('tap');
+    }
+  }
+
+  function close() {
+    var modal = document.getElementById("modalStillLightbox");
+    if (!modal) return;
+    modal.classList.add("hidden");
+    if (typeof AudioEngine !== "undefined" && AudioEngine.play) {
+      AudioEngine.play('tap');
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("keydown", function(e) {
+      if (e.key === "Escape" || e.keyCode === 27) {
+        var modal = document.getElementById("modalStillLightbox");
+        if (modal && !modal.classList.contains("hidden")) {
+          close();
+        }
+      }
+    });
+  }
+
+  return {
+    open: open,
+    close: close
+  };
+})();
+
+function openStillLightbox(imgSrc, captionText) {
+  StillLightbox.open(imgSrc, captionText);
+}
+
+function closeStillLightbox() {
+  StillLightbox.close();
+}
+
+if (typeof window !== "undefined") {
+  window.UIController = UIController;
+  window.QuizController = QuizController;
+  window.CertRenderer = CertRenderer;
+  window.TrophyGallery = TrophyGallery;
+  window.SoundtrackGallery = SoundtrackGallery;
+  window.TeacherDashboard = TeacherDashboard;
+  window.StillLightbox = StillLightbox;
+  window.openStillLightbox = openStillLightbox;
+  window.closeStillLightbox = closeStillLightbox;
+
+  // 桑原原則: ブラウザの『戻る』『進む』操作によるDOM・ステート乖離防止
+  window.addEventListener("popstate", function(e) {
+    if (e.state && e.state.view) {
+      UIController.switchView(e.state.view, true);
+    } else {
+      var hash = window.location.hash.replace("#", "");
+      if (hash && ["auth", "novel", "keepout", "badend", "trueend"].indexOf(hash) !== -1) {
+        UIController.switchView(hash, true);
+      }
+    }
+  });
+}
+</script>

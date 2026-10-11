@@ -1,0 +1,25 @@
+{
+  "receipt_id": "RCP-1791710434396",
+  "timestamp": "2026-10-11T09:20:34.396Z",
+  "engine": "simulate_all_paths.js",
+  "environment": "Node.js v25.9.0",
+  "metrics": {
+    "total_nodes_scanned": 160,
+    "broken_links": 0,
+    "bad_ends_verified": 26,
+    "quiz_questions_verified": 10,
+    "tips_linkages_verified": 19,
+    "rule_errors": 0
+  },
+  "invariants": {
+    "DIR_01_persona_boundaries": "PASS",
+    "DIR_02_bracket_elimination": "PASS",
+    "DIR_03_narrative_secrecy": "PASS",
+    "DIR_08_cognitive_boundary": "PASS",
+    "universal_gate_guards": "PASS",
+    "phase_monotonicity": "PASS",
+    "rollback_causality": "PASS"
+  },
+  "scenario_sha256": "6e2e16224a3df1970c16764e2d32fa6090d38db7ebe80949a83c87da1b2c8ac3",
+  "status": "PASSED"
+}

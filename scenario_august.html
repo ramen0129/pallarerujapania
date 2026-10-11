@@ -1,0 +1,183 @@
+<script>
+/**
+ * 『パラレル・ジャパニア：クロニクル 〜失われた人権の180分〜』
+ * 外伝シナリオ：エピソード・オーガスト (scenario_august.html)
+ * 視点：エレナ・オーガスト ＆ オーガスト卿の私的記録アーカイブ
+ * 真エンディング達成特典：独裁者の仮面の奥に秘められた真実の追想録（起承転結・4幕構成）
+ */
+const SCENARIO_AUGUST = {
+  // 後方互換性エイリアス
+  "SIDE_AUGUST": {
+    id: "SIDE_AUGUST",
+    char: "ALL",
+    charName: "オーガスト",
+    time: "EXTRA",
+    title: "外伝：追想録 〜冷酷の仮面の奥で〜",
+    paragraphs: [
+      function(state) {
+        var imgUrl = (typeof CHARACTER_IMAGES !== "undefined" && CHARACTER_IMAGES.AUGUST) 
+          ? CHARACTER_IMAGES.AUGUST 
+          : "assets/raw_sources/august_portrait_opt.jpg";
+        return "<div class='flex flex-col sm:flex-row items-center sm:items-start gap-4 p-4 my-3 bg-gradient-to-br from-neutral-900/95 via-neutral-950/95 to-amber-950/40 border-2 border-amber-500/60 rounded-2xl shadow-2xl backdrop-blur-md'>"
+          + "<div class='relative shrink-0'>"
+          + "<img id='augustMemoirCoverPortrait' src='" + imgUrl + "' alt='オーガスト・フォン・ヴァイスハイト' class='w-24 h-32 sm:w-28 sm:h-36 rounded-xl object-cover border-2 border-amber-400/80 shadow-2xl'>"
+          + "<span class='absolute bottom-1 right-1 bg-amber-950/95 text-amber-300 text-[8px] sm:text-[9px] font-tech font-black px-1.5 py-0.5 rounded border border-amber-500/50'>UNMASKED</span>"
+          + "</div>"
+          + "<div class='space-y-1.5 flex-1 min-w-0 text-left'>"
+          + "<div class='flex flex-wrap items-center gap-1.5'>"
+          + "<span class='text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500 text-neutral-950 shadow-md font-hud'>【最高総裁の素顔：極秘追想録】</span>"
+          + "<span class='text-[9px] sm:text-[10px] font-mono font-bold text-amber-300 bg-amber-950/90 px-1.5 py-0.5 rounded border border-amber-500/40'>ARCHIVE UNLOCKED</span>"
+          + "</div>"
+          + "<div class='font-black text-base sm:text-lg text-white font-hud'>オーガスト・フォン・ヴァイスハイト</div>"
+          + "<div class='quote-box text-amber-300/90 text-[11px] sm:text-xs font-story leading-snug'>「愛しているからこそ、遠ざけねばならなかった。私は自らの顔に冷酷の鉄の仮面を焼き付けた……」</div>"
+          + "<div class='text-[10px] sm:text-[11px] text-amber-400 font-mono flex items-center gap-1 pt-0.5'><span>📜</span><span>新日本国憲法草案 / 永久の信託（第97条）</span></div>"
+          + "</div>"
+          + "</div>";
+      },
+      "タワー最上階、黒煙の漂う執務室の大理石の床に、一つの銀の懐中時計が転がっていた。",
+      "敗れ去った父の胸元から滑り落ちたその形見に、私は手を伸ばした。"
+    ],
+    choices: [
+      { text: "銀時計を拾い上げ、記録を読み始める", next: "SIDE_AUGUST_1" }
+    ]
+  },
+
+  // 【起】百年の暗黒と、銀時計のデータチップ
+  "SIDE_AUGUST_1": {
+    id: "SIDE_AUGUST_1",
+    char: "ALL",
+    charName: "オーガスト",
+    time: "EXTRA",
+    title: "外伝：第1章【起】〜失われし聖典の光〜",
+    paragraphs: [
+      "タワー最上階、黒煙の漂う執務室の大理石の床に、一つの銀の懐中時計が転がっていた。",
+      "私に敗れ、連行されていった父の胸元から滑り落ちたものだ。拾い上げてリューズを押すと、煤けた蓋が静かに開き、一枚の色褪せた写真が現れた。",
+      "若き日の母と、まだ生まれて間もない私を抱いた、穏やかに微笑む父の姿。",
+      "「お父様……。あなたに、こんな優しい笑顔があったなんて……」",
+      function(state) {
+        var imgUrl = (typeof CHARACTER_IMAGES !== "undefined" && CHARACTER_IMAGES.AUGUST) 
+          ? CHARACTER_IMAGES.AUGUST 
+          : "assets/raw_sources/august_portrait_opt.jpg";
+        return "<div class='flex flex-col sm:flex-row items-center sm:items-start gap-4 p-4 my-3 bg-gradient-to-br from-neutral-900/95 via-neutral-950/95 to-amber-950/40 border-2 border-amber-500/60 rounded-2xl shadow-2xl backdrop-blur-md'>"
+          + "<div class='relative shrink-0'>"
+          + "<img id='augustMemoirPortrait' src='" + imgUrl + "' alt='オーガスト・フォン・ヴァイスハイト' class='w-24 h-32 sm:w-28 sm:h-36 rounded-xl object-cover border-2 border-amber-400/80 shadow-2xl'>"
+          + "<span class='absolute bottom-1 right-1 bg-amber-950/95 text-amber-300 text-[8px] sm:text-[9px] font-tech font-black px-1.5 py-0.5 rounded border border-amber-500/50'>UNMASKED</span>"
+          + "</div>"
+          + "<div class='space-y-1.5 flex-1 min-w-0 text-left'>"
+          + "<div class='flex flex-wrap items-center gap-1.5'>"
+          + "<span class='text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500 text-neutral-950 shadow-md font-hud'>【最高総裁の素顔：極秘追想録】</span>"
+          + "<span class='text-[9px] sm:text-[10px] font-mono font-bold text-amber-300 bg-amber-950/90 px-1.5 py-0.5 rounded border border-amber-500/40'>ARCHIVE UNLOCKED</span>"
+          + "</div>"
+          + "<div class='font-black text-base sm:text-lg text-white font-hud'>オーガスト・フォン・ヴァイスハイト</div>"
+          + "<div class='quote-box text-amber-300/90 text-[11px] sm:text-xs font-story leading-snug'>「愛しているからこそ、遠ざけねばならなかった。私は自らの顔に冷酷の鉄の仮面を焼き付けた……」</div>"
+          + "<div class='text-[10px] sm:text-[11px] text-amber-400 font-mono flex items-center gap-1 pt-0.5'><span>📜</span><span>新日本国憲法草案 / 永久の信託（第97条）</span></div>"
+          + "</div>"
+          + "</div>";
+      },
+      "冷徹無比な独裁者としてしか父を知らない私の胸に、痛烈な衝撃が走る。その時、写真の台座の隙間に、かすかな青い光が明滅しているのに気づいた。",
+      "極小の旧規格データ端子。父が三十年間、肌身離さず心臓の上で温め続けていた秘密の記憶素子だ。",
+      "私はそれを、机の上のメインコンソールへと差し込んだ。",
+      "電子音が響き、暗闇のモニターに青白い光とともに、膨大な私的アーカイブが展開される。",
+      "百年前の大崩壊以来、誰もが『首輪と配給』を世界の自然の摂理として疑わなくなっていた時代。公社の名門の跡取りとして、旧時代の法哲学を研究していた若き日の父の記録が、そこに並んでいた。",
+      "画面の中央に、父の若き日の直筆ログが浮かび上がる。",
+      '『〇〇年〇月〇日。タワー地下第4層の密閉書庫で、破損した旧時代の光ディスクを解読した。<br/>そこに記されていた言葉……<span class=\'tip-link\' data-tip=\'日本国憲法\'>日本国憲法</span>。<br/>“すべて国民は、<span class=\'tip-link\' data-tip=\'幸福追求権とプライバシー\'>個人として尊重される</span>”。<br/>“すべて国民は、<span class=\'tip-link\' data-tip=\'法の下の平等\'>法の下に平等</span>であつて、人種、信条、性別、社会的身分又は門地により、差別されない”。』',
+      "[CENTER]『なんという眩い光だろうか。人間が生まれながらに尊厳を持ち、不可侵の権利を持つという思想。この失われた古代の知恵こそが、首輪に飼い慣らされた我らの都市の闇を照らす唯一の道なのだ』[/CENTER]",
+      "……あの冷酷な父が、かつて誰よりも無垢に、純粋に平等の光を信じていた。",
+      "私は震える指先で、次の記録を開いた。"
+    ],
+    choices: [
+      { text: "震える手で、手記の次頁を開く ▶", next: "SIDE_AUGUST_2" }
+    ]
+  },
+
+  // 【承】総裁継承と『基底保全区』の冷酷な数理
+  "SIDE_AUGUST_2": {
+    id: "SIDE_AUGUST_2",
+    char: "ALL",
+    charName: "オーガスト",
+    time: "EXTRA",
+    title: "外伝：第2章【承】〜冷酷なる数理の仮面〜",
+    paragraphs: [
+      "次に開かれたフォルダには、父が先代の急逝により最高総裁の座を継いだ直後の、公社内部監査データが格納されていた。",
+      "目に飛び込んできたのは、血のような赤字で刻まれた絶望のグラフ。食糧自給率は12%、抗生剤の備蓄残量は5%未満。",
+      "そして、基幹電算機『アマテラス』が弾き出した、幾百回にも及ぶシミュレーションの結論。",
+      "[IMPACT]『全市民100万人へ物資を完全平等に分配した場合、60日以内に全市民が餓死。生存者ゼロ。都市機能完全死滅』[/IMPACT]",
+      "画面が切り替わり、苦悶に満ちた父の手記がテキストとしてスクロールしていく。",
+      "『電算機のアマテラスは嘘をつかない。百回計算させても答えは同じだった。全員を救おうとすれば、全員が死ぬ。あの古文書の美しい理想は、飽食と富に恵まれた旧世紀の贅沢品だったのだ』",
+      "『会議室の高官どもは青ざめ、「下層の配給を即刻全廃し、我ら特権階級だけで生き残ろう」と喚き散らした。誰一人として、同胞を間引く地獄の責任を引き受けようとはしなかった』",
+      "[CENTER]『だから、私が引き受けた。同胞を見殺しにする呪いと汚名を、すべてこの一身に背負うことを決めたのだ。誰かが悪魔にならねば、人間という種そのものがこの極東から絶滅していたからだ』[/CENTER]",
+      "『世の者どもは、あそこを「汚濁のスラム」と呼び嘲笑う。だが、私は生涯、あの場所をスラムなどと呼んだことはない。あそこは「基底保全区」だ。いつか都市が甦る日のために、命の種を繋ぐ我らの苗床なのだ』",
+      "『私は自らの感情を焼き殺し、電算機と毎夜睨み合い、一人あたり1日1,150キロカロリー……餓死を回避する極限の生命維持最低線を1グラムも狂わさず算定し続けた。100キロカロリー増やせばタワーの備蓄が共倒れで尽き、100キロカロリー減らせば餓死の山ができる。石を投げられ、悪鬼と呪われようと、私はこの冷酷な数理で、十万の命を三十年間、絶滅の淵から引き止め続けてきたのだ』",
+      "『飢餓線上の命を繋ぎ止めるため、私は首輪に生体代謝の調律機能を組み込んだ。頸動脈へ極微量の合成抗体と栄養パルスを送り込み、心臓を止めないための生命維持装置だ。そして同時に……私はそこに、電磁信管を仕込んだ。いつか都市が救いようのない破局を迎えたとき、同胞たちに地獄の苦痛を味わわせず、一瞬で安らかに眠らせるための最後の安楽死プロトコルとして』",
+      "[WHISPER]『だが……私の意図など、この濁流の前には何の免罪符にもならなかった。治安警察はそれを「逃亡者の処刑具」として使い、反逆する者の首を吹き飛ばして支配した。慈悲のつもりで仕組んだ安楽死の引き金が、同胞を脅迫する最悪の首輪へと成り果てたのだ。私の罪は……どこまでも深かった』[/WHISPER]",
+      "支配の鎖だと信じていた首輪の裏に隠されていた、餓死を防ぐためのカテーテルと、現場で処刑具に堕ちていった信管の真実。",
+      "私の胸は激しく波打ち、視界が涙でにじんだ。"
+    ],
+    choices: [
+      { text: "黒ずんだ血痕の残る頁をめくる ▶", next: "SIDE_AUGUST_3" }
+    ]
+  },
+
+  // 【転】娘エレナの誕生と、閉ざされた座敷牢
+  "SIDE_AUGUST_3": {
+    id: "SIDE_AUGUST_3",
+    char: "ALL",
+    charName: "オーガスト",
+    time: "EXTRA",
+    title: "外伝：第3章【転】〜奪われた愛と座敷牢〜",
+    paragraphs: [
+      "暴動鎮圧の冷酷な記録が続くフォルダの奥に、突如としてパスワードで厳重に保護された短いファイルが現れた。",
+      "ファイル名は、私の生年月日。私の出生の記録と、母の病歴だった。",
+      "ロックが解除され、父の震える筆跡で綴られた独白がモニターを照らし出す。",
+      "[WHISPER]『〇〇年〇月〇日。娘が生まれた。名をエレナと名付けた。赤子の小さな指が私の指を握った瞬間、私は三十年間の統治で初めて、足がすくむような恐怖を覚えた』[/WHISPER]",
+      "『この温もりを愛してしまえば、私の冷徹な計算が狂ってしまう。娘を愛し、情けをかければ、その瞬間に基底保全区の誰かが餓死する。統治者が家族に私情を挟めば、都市の規律は一瞬で崩壊するのだ』",
+      "『妻だけは……エレナの母だけは、私が夜更けの執務室で一人、血の涙を流して震えていることを知っていた。「あなた、もうやめて……悪魔になるのはやめて」と泣いて縋る妻を、私は座敷牢へと幽閉するしかなかった。彼女の優しさこそが、この脆弱な政策にとって最大の毒だったからだ』",
+      "『二重の防護ガラスの向こうで、妻は私を一度も責めることなく、ただ静かに微笑んでいた。その微笑みこそが、私の胸を生涯焼き尽くす消えない業火となった』",
+      "[CENTER]『愛しているからこそ、遠ざけねばならなかった。私は自らの顔に冷酷の鉄の仮面を焼き付け、部下にも娘にも笑顔を見せず、ただ憎まれる暴君として振る舞い続けた』[/CENTER]",
+      "『だが……私は、すべてを諦めたわけではなかった。タワーの基幹サーバーの最深部、古遺物スキャナーのシステムプロトコルに、私は極秘の解除コードを刻み込んだ。いつか、私という怪物を打ち倒し、この極限の数理すら乗り越えて全員を救う者が現れた時のために……』",
+      "「お父様……。お母様を閉じ込めたのも、私を遠ざけたのも……」",
+      "父は母を憎んだのではなかった。愛や優しさに絆されれば、十万の命を繋ぐ冷酷な計算が瓦解してしまうからこそ、己の心を引き裂いて愛を切り捨てていたのだ。",
+      "胸を締め付ける慟哭とともに、私は手記の最後の記録へとスクロールした。"
+    ],
+    choices: [
+      { text: "最後の告白を読み届ける ▶", next: "SIDE_AUGUST_4" }
+    ]
+  },
+
+  // 【結】だからこその悪魔、そして主権者たちの夜明け
+  "SIDE_AUGUST_4": {
+    id: "SIDE_AUGUST_4",
+    char: "ALL",
+    charName: "オーガスト",
+    time: "EXTRA",
+    title: "外伝：第4章【結】〜主権者たちの夜明け〜",
+    paragraphs: [
+      "手記の末尾、日付のない最後のログには、誰にも見せることのない父の静かな遺言が刻まれていた。",
+      "『執務室の窓の下、配給の列に並ぶ民の群れを見下ろしながら、私はいつも考えている。いつか、私の独裁が終わる日のことを』",
+      "『私を憎む者が私を殺し、このタワーが倒れる日は必ず来るだろう。だが、独裁者が死んだところで、明日からのこの街の食料自給率は12%のままだ。抗生剤の備蓄も、綺麗な水も、何一つ増えはしない』",
+      "『もし、耳ざわりのいい平等を掲げるだけの愚か者が私を討ち取れば、全市民に等しく配給を配り、わずか二ヶ月で全人口を道連れにして滅びるだろう』",
+      "[CENTER]『だからこそ、私は悪魔であり続けねばならなかった』[/CENTER]",
+      "『恨みや怒りだけで動く者に、この過酷な街を生き延びさせる知恵などない。私を越えていく者が現れるとするならば——それは単なる反逆者であってはならない。私の敷いた冷徹な数理の地獄を理解した上で、それでもなお、あの百年前の古文書が記した「人間の尊厳」と<span class='tip-link' data-tip='生存権'>生存権</span>を捨てずに抱きしめ続けられる者でなければならない』",
+      "『権力者が自らの独善で人を支配することを防ぐためにこそ、<span class='tip-link' data-tip='憲法尊重擁護義務'>立憲主義</span>が存在する。どれほど極限の危機であろうとも、<span class='tip-link' data-tip='公共の福祉'>公共の福祉</span>を名目に個人の尊厳を完全に踏みにじることは、決して正当化されてはならなかったのだ』",
+      "[WHISPER]『……エレナ。お前が私を憎み、反抗の瞳で私を睨みつけていると報告を受けた。それでいい。私を憎め。憎んで、強くなれ』[/WHISPER]",
+      "『私がお前に遺せるものは、血塗られた汚名と、この逃げ場のない過酷な現実だけだ。願わくは、お前の歩む道の先に……。いや。人を家畜として切り捨ててきたこの私に、未来を祈る資格など一片たりともありはしない』",
+      "静かに、端末の画面の明かりが落ちた。",
+      "黒煙の煤けた執務室に、朝の大気が吹き込んでくる。割れたガラス窓の向こうでは、身分防壁が崩れ去り、朝陽に輝く東京湾と、新しい時代の訪れを叫ぶ人々の声が響いていた。",
+      "私は、机の上に置かれた銀の懐中時計をそっと手に取り、胸に強く押し当てた。",
+      "「お父様……。あなたは、ずっと待っていたのね」",
+      "冷酷無比な独裁者の鉄の仮面の奥にあったのは、絶滅の淵から街を守るため、すべての憎悪を一人で飲み干し続けた、あまりにも孤独な統治者の姿だった。",
+      "父の言う通りだ。タワーの独裁は倒れた。けれど明日からの食糧自給率は12%のまま、首輪の生体サポートを失った生身の人間たちの前に、過酷な現実が横たわっている。甘い理想だけでは、誰も救えない。",
+      "[CENTER]「けれど、お父様。私たちは絶対に、命を選別して誰かを切り捨てる道には戻りません」[/CENTER]",
+      "私の瞳に、厳しく澄み渡った理知の光が宿る。",
+      "[IMPACT]「あなたが一人で背負い、絶望したその現実を、私たちは主権者となったすべての同胞と共に引き受けます！」[/IMPACT]",
+      "[CENTER]「痛みを分かち合い、知恵を出し合い、人間が人間として尊ばれる新しい社会を創り出してみせます」[/CENTER]",
+      "朝の光が、机の上の家族写真をあたたかく照らし出していた。",
+      "父が遺した重く冷たい問いを胸に抱きしめ、私は新しい夜明けの中へ、確かな一歩を踏み出した。"
+    ],
+    unlockTrophy: "augustMaster",
+    choices: [
+      { text: "手記を閉じ、タイムラインへ戻る", action: "returnChart", unlockTrophy: "augustMaster" }
+    ]
+  }
+};
+</script>

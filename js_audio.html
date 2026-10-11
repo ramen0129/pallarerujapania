@@ -1,0 +1,787 @@
+<script>
+var AudioEngine = (function() {
+  var ctx = null;
+  var isMuted = false;
+
+  function init() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) ctx = new AC();
+    }
+  }
+
+  function play(type) {
+    if (isMuted) return;
+    init();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+
+    var now = ctx.currentTime;
+    if (type === 'tap') {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(540, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.05);
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.05);
+    } else if (type === 'jump') {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(180, now);
+      osc.frequency.exponentialRampToValueAtTime(720, now + 0.28);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.28);
+    } else if (type === 'flatline') {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.linearRampToValueAtTime(0.12, now + 1.2);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 1.4);
+    } else if (type === 'keepout') {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.setValueAtTime(90, now + 0.12);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.32);
+    } else if (type === 'badend') {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(110, now);
+      osc.frequency.exponentialRampToValueAtTime(45, now + 0.6);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.6);
+    } else if (type === 'chime') {
+      var notes = [523.25, 659.25, 783.99, 1046.50];
+      notes.forEach(function(f, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(f, now + i * 0.1);
+        gain.gain.setValueAtTime(0.12, now + i * 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.38);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.1);
+        osc.stop(now + i * 0.1 + 0.38);
+      });
+    } else if (type === "preview") {
+      // 428風 緊迫の電脳シンセジングル（ベースパルス＋鋭いシーケンスアルペジオ）
+      var bassNotes = [110, 110, 146.83, 164.81];
+      bassNotes.forEach(function(f, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(f, now + i * 0.2);
+        gain.gain.setValueAtTime(0.18, now + i * 0.2);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.2 + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.2);
+        osc.stop(now + i * 0.2 + 0.35);
+      });
+      var leadNotes = [440, 523.25, 659.25, 880, 783.99, 1046.50];
+      leadNotes.forEach(function(f, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = "square";
+        osc.frequency.setValueAtTime(f, now + 0.8 + i * 0.12);
+        gain.gain.setValueAtTime(0.14, now + 0.8 + i * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8 + i * 0.12 + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + 0.8 + i * 0.12);
+        osc.stop(now + 0.8 + i * 0.12 + 0.25);
+      });
+      var notes = [523.25, 659.25, 783.99, 1046.50];
+      notes.forEach(function(f, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(f, now + i * 0.1);
+        gain.gain.setValueAtTime(0.12, now + i * 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.38);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.1);
+        osc.stop(now + i * 0.1 + 0.38);
+      });
+    } else if (type === 'causality') {
+      // 428風 因果変転・バタフライエフェクト 和音アルペジオ＆残響チャイム
+      var freqs = [329.63, 440.00, 554.37, 659.25, 880.00, 1108.73, 1318.51];
+      freqs.forEach(function(f, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = i % 2 === 0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(f, now + i * 0.05);
+        gain.gain.setValueAtTime(0.09, now + i * 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.60);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.05);
+        osc.stop(now + i * 0.05 + 0.60);
+      });
+    } else if (type === 'pen_sketch') {
+      // シンの金色の万年筆でガラスに絵を描く摩擦音（キュッキュッ）
+      for (var s = 0; s < 3; s++) {
+        var sTime = now + s * 0.12;
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(850 + s * 120, sTime);
+        osc.frequency.linearRampToValueAtTime(1350 - s * 80, sTime + 0.07);
+        gain.gain.setValueAtTime(0.05, sTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, sTime + 0.07);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(sTime);
+        osc.stop(sTime + 0.07);
+      }
+    } else if (type === 'heartbeat') {
+      // 緊迫の心音（ドクン……）
+      var osc1 = ctx.createOscillator();
+      var gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(75, now);
+      osc1.frequency.exponentialRampToValueAtTime(45, now + 0.10);
+      gain1.gain.setValueAtTime(0.20, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.10);
+
+      var osc2 = ctx.createOscillator();
+      var gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(65, now + 0.14);
+      osc2.frequency.exponentialRampToValueAtTime(38, now + 0.25);
+      gain2.gain.setValueAtTime(0.16, now + 0.14);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.14);
+      osc2.stop(now + 0.25);
+    } else if (type === 'scan') {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.linearRampToValueAtTime(1280, now + 0.4);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.4);
+    } else if (type === 'tawakichi_foam') {
+      // タワ吉の超高濃度低刺激性泡スプレー（ブシュゥゥゥッ！！）
+      var bufferSize = Math.floor(ctx.sampleRate * 0.35);
+      var noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      var output = noiseBuffer.getChannelData(0);
+      for (var i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      var whiteNoise = ctx.createBufferSource();
+      whiteNoise.buffer = noiseBuffer;
+      var filter = ctx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(2400, now);
+      filter.frequency.exponentialRampToValueAtTime(700, now + 0.35);
+      filter.Q.value = 1.8;
+      var gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      whiteNoise.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      whiteNoise.start(now);
+      whiteNoise.stop(now + 0.35);
+    } else if (type === 'tawakichi_mop') {
+      // タワ吉の高速回転モップ磨き上げ音（キュッ！キュッ！）
+      for (var m = 0; m < 2; m++) {
+        var mTime = now + m * 0.12;
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(1300, mTime);
+        osc.frequency.linearRampToValueAtTime(2600, mTime + 0.04);
+        osc.frequency.linearRampToValueAtTime(1600, mTime + 0.08);
+        gain.gain.setValueAtTime(0.12, mTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, mTime + 0.08);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(mTime);
+        osc.stop(mTime + 0.08);
+      }
+    }
+  }
+
+  function toggleMute() {
+    isMuted = !isMuted;
+    var icon = document.getElementById("audioIcon");
+    if (icon) icon.textContent = isMuted ? "🔇" : "🔊";
+
+    // BGMゲインも連動して即時消音/復帰
+    if (bgmMasterGain && ctx) {
+      var targetGain = !isMuted && isBgmEnabled ? bgmVolume : 0.0001;
+      bgmMasterGain.gain.setValueAtTime(bgmMasterGain.gain.value, ctx.currentTime);
+      bgmMasterGain.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + 0.1);
+    }
+    return isMuted;
+  }
+
+  // iOS / iPadOS Safari Web Audio 自動再生制限解除リスナー
+  function setupUserGestureUnlock() {
+    var unlock = function() {
+      init();
+      if (ctx && ctx.state === "suspended") {
+        ctx.resume();
+      }
+      document.removeEventListener('touchstart', unlock, true);
+      document.removeEventListener('touchend', unlock, true);
+      document.removeEventListener('click', unlock, true);
+    };
+    document.addEventListener('touchstart', unlock, true);
+    document.addEventListener('touchend', unlock, true);
+    document.addEventListener('click', unlock, true);
+  }
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", setupUserGestureUnlock);
+    } else {
+      setupUserGestureUnlock();
+    }
+  }
+
+  // ============================================================================
+  // 【旋律柱】プロシージャルBGMエンジン (Procedural Web Audio Synthesizer)
+  // 通信負荷 0KB・完全自己完結・ローパスフィルター(650Hz)による微弱音量(0.035)設計
+  // ============================================================================
+  var isBgmEnabled = true;
+  var bgmVolume = 0.035; // かすかに聞こえる約3.5%の微弱マスターゲイン
+  var currentBgmKey = null;
+  var bgmMasterGain = null;
+  var bgmFilter = null;
+  var bgmTimerId = null;
+  var bgmStartTime = 0;
+  var bgmStep = 0;
+
+  // ローカルストレージからBGM設定復元
+  try {
+    var savedBgmSetting = localStorage.getItem("pj_bgm_enabled");
+    if (savedBgmSetting !== null) {
+      isBgmEnabled = (savedBgmSetting === "true");
+    }
+  } catch (e) {}
+
+  function initBgmNodes() {
+    init();
+    if (!ctx) return;
+    if (!bgmMasterGain) {
+      bgmMasterGain = ctx.createGain();
+      bgmMasterGain.gain.setValueAtTime(isBgmEnabled && !isMuted ? bgmVolume : 0.0001, ctx.currentTime);
+      bgmMasterGain.connect(ctx.destination);
+    }
+    if (!bgmFilter) {
+      bgmFilter = ctx.createBiquadFilter();
+      bgmFilter.type = "lowpass";
+      bgmFilter.frequency.setValueAtTime(650, ctx.currentTime); // キンキンする高音をバッサリカット
+      bgmFilter.Q.setValueAtTime(1.0, ctx.currentTime);
+      bgmFilter.connect(bgmMasterGain);
+    }
+  }
+
+  // ノート発音ヘルパー (ADSR エンベロープ付き)
+  function playSynthVoice(freq, startTime, dur, type, vel, targetNode) {
+    if (!ctx || isMuted || !isBgmEnabled) return;
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = type || "triangle";
+    osc.frequency.setValueAtTime(freq, startTime);
+
+    var maxV = (vel || 0.5) * 0.4;
+    var attackTime = Math.min(0.08, dur * 0.2);
+    var releaseTime = Math.min(0.35, dur * 0.4);
+
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.linearRampToValueAtTime(maxV, startTime + attackTime);
+    gain.gain.setValueAtTime(maxV * 0.75, startTime + dur - releaseTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + dur);
+
+    osc.connect(gain);
+    gain.connect(targetNode || bgmFilter || ctx.destination);
+
+    osc.start(startTime);
+    osc.stop(startTime + dur + 0.05);
+  }
+
+  // 楽曲シーケンス定義 (息の長いメロディライン＋温かいコード伴奏＋パルス)
+  var BGM_DATA = {
+    // 1. レン（自由権）：『反逆のパルス』 (Key: Fm / 138 BPM)
+    ren: {
+      bpm: 138,
+      bars: 8,
+      filterFreq: 950,
+      chords: [
+        { bass: 87.31, pad: [174.61, 207.65, 261.63] }, // Fm (F2, F3-Ab3-C4)
+        { bass: 77.78, pad: [155.56, 196.00, 233.08] }, // Eb
+        { bass: 69.30, pad: [138.59, 174.61, 207.65] }, // Db
+        { bass: 65.41, pad: [130.81, 164.81, 196.00, 233.08] }, // C7
+        { bass: 87.31, pad: [174.61, 207.65, 261.63] }, // Fm
+        { bass: 77.78, pad: [155.56, 196.00, 233.08] }, // Eb
+        { bass: 58.27, pad: [116.54, 138.59, 174.61] }, // Bbm
+        { bass: 65.41, pad: [130.81, 164.81, 196.00, 233.08] }  // C7
+      ],
+      melody: [
+        { bar: 0, beat: 0, dur: 1.2, freq: 349.23 }, // F4
+        { bar: 0, beat: 3, dur: 0.4, freq: 415.30 }, // Ab4
+        { bar: 1, beat: 0, dur: 0.8, freq: 392.00 }, // G4
+        { bar: 1, beat: 2, dur: 0.8, freq: 349.23 }, // F4
+        { bar: 2, beat: 0, dur: 1.6, freq: 523.25 }, // C5 (高音の叫び)
+        { bar: 3, beat: 0, dur: 0.8, freq: 466.16 }, // Bb4
+        { bar: 3, beat: 2, dur: 0.8, freq: 415.30 }, // Ab4
+        { bar: 4, beat: 0, dur: 1.2, freq: 349.23 }, // F4
+        { bar: 5, beat: 0, dur: 0.8, freq: 392.00 }, // G4
+        { bar: 5, beat: 2, dur: 0.8, freq: 415.30 }, // Ab4
+        { bar: 6, beat: 0, dur: 1.6, freq: 466.16 }, // Bb4
+        { bar: 7, beat: 0, dur: 1.6, freq: 523.25 }  // C5
+      ]
+    },
+
+    // 2. エレナ（平等権）：『白銀の矜持』 (Key: Bbm / 116 BPM)
+    elena: {
+      bpm: 116,
+      bars: 8,
+      filterFreq: 1100,
+      chords: [
+        { bass: 116.54, pad: [233.08, 277.18, 349.23] }, // Bbm
+        { bass: 103.83, pad: [207.65, 261.63, 349.23] }, // Fm/Ab
+        { bass: 92.50,  pad: [185.00, 233.08, 277.18, 349.23] }, // Gbmaj7
+        { bass: 87.31,  pad: [174.61, 220.00, 261.63, 311.13] }, // F7
+        { bass: 116.54, pad: [233.08, 277.18, 349.23] }, // Bbm
+        { bass: 77.78,  pad: [155.56, 185.00, 233.08] }, // Ebm
+        { bass: 103.83, pad: [207.65, 261.63, 311.13] }, // Ab
+        { bass: 69.30,  pad: [138.59, 174.61, 207.65, 261.63] }  // Dbmaj7
+      ],
+      melody: [
+        { bar: 0, beat: 0, dur: 1.4, freq: 349.23 }, // F4
+        { bar: 0, beat: 3, dur: 0.5, freq: 392.00 }, // G4
+        { bar: 1, beat: 0, dur: 1.8, freq: 415.30 }, // Ab4
+        { bar: 2, beat: 0, dur: 1.6, freq: 523.25 }, // C5
+        { bar: 3, beat: 0, dur: 0.9, freq: 466.16 }, // Bb4
+        { bar: 3, beat: 2, dur: 0.9, freq: 415.30 }, // Ab4
+        { bar: 4, beat: 0, dur: 1.4, freq: 369.99 }, // Gb4
+        { bar: 4, beat: 3, dur: 0.5, freq: 415.30 }, // Ab4
+        { bar: 5, beat: 0, dur: 1.8, freq: 466.16 }, // Bb4
+        { bar: 6, beat: 0, dur: 1.8, freq: 440.00 }, // A4
+        { bar: 7, beat: 0, dur: 2.0, freq: 349.23 }  // F4
+      ]
+    },
+
+    // 3. ダニエル（社会権）：『命のトリアージ』 (Key: Fm / 96 BPM)
+    daniel: {
+      bpm: 96,
+      bars: 8,
+      filterFreq: 750,
+      chords: [
+        { bass: 87.31, pad: [174.61, 207.65, 261.63] }, // Fm
+        { bass: 69.30, pad: [174.61, 207.65, 261.63, 277.18] }, // Dbmaj7
+        { bass: 58.27, pad: [138.59, 174.61, 207.65, 261.63] }, // Bbm7
+        { bass: 65.41, pad: [164.81, 196.00, 233.08, 261.63] }, // C7sus4-C7
+        { bass: 87.31, pad: [174.61, 207.65, 261.63] }, // Fm
+        { bass: 69.30, pad: [138.59, 174.61, 233.08] }, // Bbm/Db
+        { bass: 65.41, pad: [130.81, 164.81, 196.00, 233.08] }, // C7
+        { bass: 87.31, pad: [174.61, 207.65, 261.63] }  // Fm
+      ],
+      melody: [
+        { bar: 0, beat: 0, dur: 1.8, freq: 174.61 }, // F3
+        { bar: 0, beat: 3, dur: 0.6, freq: 196.00 }, // G3
+        { bar: 1, beat: 0, dur: 2.2, freq: 207.65 }, // Ab3
+        { bar: 2, beat: 0, dur: 1.8, freq: 196.00 }, // G3
+        { bar: 2, beat: 3, dur: 0.6, freq: 174.61 }, // F3
+        { bar: 3, beat: 0, dur: 2.2, freq: 155.56 }, // Eb3
+        { bar: 4, beat: 0, dur: 2.5, freq: 138.59 }, // Db3
+        { bar: 5, beat: 0, dur: 2.5, freq: 130.81 }, // C3
+        { bar: 6, beat: 0, dur: 1.8, freq: 207.65 }, // Ab3
+        { bar: 6, beat: 3, dur: 0.6, freq: 196.00 }, // G3
+        { bar: 7, beat: 0, dur: 2.5, freq: 174.61 }  // F3
+      ]
+    },
+
+    // 4. クライマックス（12:20合流）：『立憲の解放』 (Key: Fm -> F Maj / 138 BPM)
+    climax: {
+      bpm: 138,
+      bars: 8,
+      filterFreq: 1400,
+      chords: [
+        { bass: 69.30, pad: [277.18, 349.23, 415.30] }, // Db
+        { bass: 77.78, pad: [311.13, 392.00, 466.16] }, // Eb
+        { bass: 87.31, pad: [349.23, 415.30, 523.25] }, // Fm
+        { bass: 103.83, pad: [261.63, 349.23, 415.30] }, // Fm/Ab
+        { bass: 69.30, pad: [277.18, 349.23, 415.30] }, // Db
+        { bass: 77.78, pad: [311.13, 392.00, 466.16] }, // Eb
+        { bass: 65.41, pad: [261.63, 329.63, 392.00, 466.16] }, // C7
+        { bass: 87.31, pad: [261.63, 329.63, 349.23, 440.00] }  // Fmaj7 (解放の光)
+      ],
+      melody: [
+        { bar: 0, beat: 0, dur: 0.9, freq: 349.23 }, // F4
+        { bar: 0, beat: 2, dur: 0.4, freq: 329.63 }, // E4
+        { bar: 0, beat: 3, dur: 0.4, freq: 349.23 }, // F4
+        { bar: 1, beat: 0, dur: 0.8, freq: 392.00 }, // G4
+        { bar: 1, beat: 2, dur: 0.8, freq: 415.30 }, // Ab4
+        { bar: 2, beat: 0, dur: 1.6, freq: 523.25 }, // C5
+        { bar: 3, beat: 0, dur: 0.8, freq: 466.16 }, // Bb4
+        { bar: 3, beat: 2, dur: 0.8, freq: 415.30 }, // Ab4
+        { bar: 4, beat: 0, dur: 0.8, freq: 349.23 }, // F4
+        { bar: 4, beat: 2, dur: 0.8, freq: 415.30 }, // Ab4
+        { bar: 5, beat: 0, dur: 1.6, freq: 554.37 }, // Db5 (最高音到達)
+        { bar: 6, beat: 0, dur: 1.6, freq: 523.25 }, // C5
+        { bar: 7, beat: 0, dur: 2.2, freq: 349.23 }  // F4 (歓喜の解決)
+      ]
+    },
+
+    // 5. オープニング（タイトル・名前入力）：『閉塞のディストピア』 (Key: Dm / 64 BPM / 暗め)
+    title: {
+      bpm: 64,
+      bars: 4,
+      filterFreq: 600,
+      chords: [
+        { bass: 36.71, pad: [146.83, 174.61, 220.00] }, // D2, Dm (重低音ドローン)
+        { bass: 34.65, pad: [138.59, 174.61, 207.65] }, // Db2, Bb/Db
+        { bass: 32.70, pad: [130.81, 164.81, 196.00] }, // C2, C
+        { bass: 30.87, pad: [123.47, 155.56, 185.00] }  // B1, Bdim
+      ],
+      melody: [
+        { bar: 0, beat: 1, dur: 2.2, freq: 587.33 }, // D5 (冷たい金属アンビエントベル)
+        { bar: 1, beat: 2, dur: 1.8, freq: 523.25 }, // C5
+        { bar: 2, beat: 1, dur: 2.2, freq: 466.16 }, // Bb4
+        { bar: 3, beat: 2, dur: 2.8, freq: 440.00 }  // A4 (暗い余韻)
+      ]
+    },
+
+    // 6. メニュー（因果管制コックピット）：『時空管制室オペレーション』 (Key: Am / 120 BPM)
+    menu: {
+      bpm: 120,
+      bars: 4,
+      filterFreq: 1400,
+      chords: [
+        { bass: 55.00, pad: [220.00, 261.63, 329.63] }, // Am
+        { bass: 43.65, pad: [174.61, 220.00, 261.63] }, // F
+        { bass: 48.99, pad: [196.00, 246.94, 293.66] }, // G
+        { bass: 41.20, pad: [164.81, 196.00, 246.94] }  // Em
+      ],
+      melody: [
+        { bar: 0, beat: 0, dur: 0.35, freq: 440.00, type: "sine" },
+        { bar: 0, beat: 1, dur: 0.35, freq: 523.25, type: "sine" },
+        { bar: 0, beat: 2, dur: 0.35, freq: 659.25, type: "sine" },
+        { bar: 0, beat: 3, dur: 0.7,  freq: 523.25, type: "triangle" },
+        { bar: 1, beat: 0, dur: 0.35, freq: 349.23, type: "sine" },
+        { bar: 1, beat: 1, dur: 0.35, freq: 440.00, type: "sine" },
+        { bar: 1, beat: 2, dur: 0.7,  freq: 523.25, type: "triangle" },
+        { bar: 2, beat: 0, dur: 0.35, freq: 392.00, type: "sine" },
+        { bar: 2, beat: 1, dur: 0.35, freq: 493.88, type: "sine" },
+        { bar: 2, beat: 2, dur: 0.7,  freq: 587.33, type: "triangle" },
+        { bar: 3, beat: 0, dur: 0.35, freq: 659.25, type: "sine" },
+        { bar: 3, beat: 2, dur: 1.2,  freq: 440.00, type: "triangle" }
+      ]
+    },
+
+    // 7. タワ吉（おまけ劇場 EXTRA）：『タワ吉の憂鬱 〜全自動モップ大爆走！〜』 (Key: C Maj / 152 BPM / 陽気)
+    tawakichi: {
+      bpm: 152,
+      bars: 8,
+      filterFreq: 3800,
+      melodyType: "square",
+      chords: [
+        { bass: 65.41, pad: [261.63, 329.63, 392.00] }, // C3
+        { bass: 48.99, pad: [196.00, 246.94, 293.66] }, // G2
+        { bass: 55.00, pad: [220.00, 261.63, 329.63] }, // A2 (Am)
+        { bass: 43.65, pad: [174.61, 220.00, 261.63] }, // F2
+        { bass: 65.41, pad: [261.63, 329.63, 392.00] }, // C3
+        { bass: 48.99, pad: [196.00, 246.94, 293.66] }, // G2
+        { bass: 43.65, pad: [174.61, 220.00, 261.63] }, // F2
+        { bass: 65.41, pad: [261.63, 329.63, 392.00] }  // C3
+      ],
+      melody: [
+        // bar 0: マリオ風ハイトーン・スタッカート装飾音
+        { bar: 0, beat: 0,   dur: 0.18, freq: 659.25, type: "square", vel: 0.85 }, // E5
+        { bar: 0, beat: 0.5, dur: 0.18, freq: 659.25, type: "square", vel: 0.85 }, // E5
+        { bar: 0, beat: 1.5, dur: 0.18, freq: 659.25, type: "square", vel: 0.85 }, // E5
+        { bar: 0, beat: 2.5, dur: 0.18, freq: 523.25, type: "square", vel: 0.8 },  // C5
+        { bar: 0, beat: 3.0, dur: 0.28, freq: 659.25, type: "square", vel: 0.9 },  // E5
+        // bar 1: 跳躍アルペジオ
+        { bar: 1, beat: 0,   dur: 0.5,  freq: 783.99, type: "square", vel: 0.95 }, // G5 (高音)
+        { bar: 1, beat: 2.0, dur: 0.5,  freq: 392.00, type: "square", vel: 0.85 }, // G4 (低音着地)
+        // bar 2: ドタバタ・スキップ
+        { bar: 2, beat: 0,   dur: 0.35, freq: 523.25, type: "square", vel: 0.85 }, // C5
+        { bar: 2, beat: 1.0, dur: 0.35, freq: 392.00, type: "square", vel: 0.8 },  // G4
+        { bar: 2, beat: 2.0, dur: 0.35, freq: 329.63, type: "square", vel: 0.8 },  // E4
+        { bar: 2, beat: 3.0, dur: 0.35, freq: 440.00, type: "square", vel: 0.85 }, // A4
+        // bar 3: 半音階コミカルアプローチ
+        { bar: 3, beat: 0,   dur: 0.3,  freq: 493.88, type: "square", vel: 0.85 }, // B4
+        { bar: 3, beat: 1.0, dur: 0.18, freq: 466.16, type: "square", vel: 0.8 },  // Bb4
+        { bar: 3, beat: 1.5, dur: 0.35, freq: 440.00, type: "square", vel: 0.85 }, // A4
+        { bar: 3, beat: 2.5, dur: 0.35, freq: 392.00, type: "square", vel: 0.85 }, // G4
+        { bar: 3, beat: 3.5, dur: 0.25, freq: 659.25, type: "square", vel: 0.9 },  // E5
+        // bar 4: モップ超高速回転メロディ！
+        { bar: 4, beat: 0,   dur: 0.25, freq: 783.99, type: "square", vel: 0.9 },  // G5
+        { bar: 4, beat: 0.5, dur: 0.35, freq: 880.00, type: "square", vel: 0.95 }, // A5
+        { bar: 4, beat: 1.5, dur: 0.25, freq: 698.46, type: "square", vel: 0.85 }, // F5
+        { bar: 4, beat: 2.0, dur: 0.25, freq: 783.99, type: "square", vel: 0.9 },  // G5
+        { bar: 4, beat: 3.0, dur: 0.25, freq: 659.25, type: "square", vel: 0.85 }, // E5
+        // bar 5: 泡スプレー噴射！
+        { bar: 5, beat: 0,   dur: 0.25, freq: 523.25, type: "square", vel: 0.85 }, // C5
+        { bar: 5, beat: 0.5, dur: 0.25, freq: 587.33, type: "square", vel: 0.85 }, // D5
+        { bar: 5, beat: 1.0, dur: 0.35, freq: 493.88, type: "square", vel: 0.85 }, // B4
+        { bar: 5, beat: 2.5, dur: 0.45, freq: 783.99, type: "square", vel: 0.95 }, // G5
+        // bar 6: ハイC連打（最高峰ピコピコ感）
+        { bar: 6, beat: 0,   dur: 0.25, freq: 1046.50, type: "square", vel: 0.95 }, // C6 !!
+        { bar: 6, beat: 1.0, dur: 0.25, freq: 783.99,  type: "square", vel: 0.85 }, // G5
+        { bar: 6, beat: 2.0, dur: 0.25, freq: 659.25,  type: "square", vel: 0.85 }, // E5
+        { bar: 6, beat: 3.0, dur: 0.25, freq: 523.25,  type: "square", vel: 0.85 }, // C5
+        // bar 7: フィニッシュ
+        { bar: 7, beat: 0,   dur: 0.25, freq: 587.33, type: "square", vel: 0.85 }, // D5
+        { bar: 7, beat: 1.0, dur: 0.18, freq: 622.25, type: "square", vel: 0.85 }, // D#5
+        { bar: 7, beat: 1.5, dur: 0.45, freq: 659.25, type: "square", vel: 0.9 },  // E5
+        { bar: 7, beat: 3.0, dur: 0.65, freq: 523.25, type: "square", vel: 0.95 }  // C5 (ポーズ！)
+      ]
+    },
+
+    // 8. エンディング（TRUE SECRET END）：『憲法第97条 〜恒久の夜明け〜』 (Key: C Maj / 122 BPM / 明るめ・カノン進行)
+    ending: {
+      bpm: 122,
+      bars: 8,
+      filterFreq: 2400,
+      chords: [
+        { bass: 65.41, pad: [261.63, 329.63, 392.00, 523.25] }, // C
+        { bass: 48.99, pad: [196.00, 246.94, 293.66, 392.00] }, // G/B
+        { bass: 55.00, pad: [220.00, 261.63, 329.63, 440.00] }, // Am
+        { bass: 41.20, pad: [164.81, 196.00, 246.94, 329.63] }, // Em
+        { bass: 43.65, pad: [174.61, 220.00, 261.63, 349.23] }, // F
+        { bass: 65.41, pad: [261.63, 329.63, 392.00, 523.25] }, // C
+        { bass: 43.65, pad: [174.61, 220.00, 261.63, 349.23] }, // F
+        { bass: 48.99, pad: [196.00, 246.94, 293.66, 392.00] }  // G7
+      ],
+      melody: [
+        { bar: 0, beat: 0, dur: 1.4, freq: 659.25, type: "triangle", vel: 0.85 }, // E5
+        { bar: 0, beat: 3, dur: 0.5, freq: 587.33, type: "triangle", vel: 0.8 },  // D5
+        { bar: 1, beat: 0, dur: 1.4, freq: 523.25, type: "triangle", vel: 0.85 }, // C5
+        { bar: 1, beat: 3, dur: 0.5, freq: 493.88, type: "triangle", vel: 0.8 },  // B4
+        { bar: 2, beat: 0, dur: 1.4, freq: 440.00, type: "triangle", vel: 0.85 }, // A4
+        { bar: 2, beat: 3, dur: 0.5, freq: 392.00, type: "triangle", vel: 0.8 },  // G4
+        { bar: 3, beat: 0, dur: 1.4, freq: 440.00, type: "triangle", vel: 0.85 }, // A4
+        { bar: 3, beat: 3, dur: 0.5, freq: 493.88, type: "triangle", vel: 0.8 },  // B4
+        { bar: 4, beat: 0, dur: 1.4, freq: 523.25, type: "triangle", vel: 0.85 }, // C5
+        { bar: 4, beat: 3, dur: 0.5, freq: 587.33, type: "triangle", vel: 0.8 },  // D5
+        { bar: 5, beat: 0, dur: 1.4, freq: 659.25, type: "triangle", vel: 0.85 }, // E5
+        { bar: 5, beat: 3, dur: 0.6, freq: 783.99, type: "triangle", vel: 0.9 },  // G5
+        { bar: 6, beat: 0, dur: 1.6, freq: 880.00, type: "triangle", vel: 0.95 }, // A5
+        { bar: 6, beat: 3, dur: 0.5, freq: 987.77, type: "triangle", vel: 0.9 },  // B5
+        { bar: 7, beat: 0, dur: 2.8, freq: 1046.50, type: "triangle", vel: 1.0 }  // C6 (歓喜のハイC！)
+      ]
+    }
+  };
+
+  // スケジューリングループ (Lookahead方式)
+  function scheduleBgmEvents() {
+    if (!ctx || !currentBgmKey || !isBgmEnabled || isMuted) return;
+    var data = BGM_DATA[currentBgmKey];
+    if (!data) return;
+
+    var secPerBeat = 60.0 / data.bpm;
+    var secPerBar = secPerBeat * 4.0;
+    var totalLoopSec = secPerBar * data.bars;
+
+    var now = ctx.currentTime;
+    if (bgmStartTime === 0) bgmStartTime = now + 0.05;
+
+    // 現在時間から未来 0.4 秒以内にある小節をスケジュール
+    var scheduleAhead = 0.4;
+    var currentCycleTime = (now - bgmStartTime) % totalLoopSec;
+
+    // 前回のチェック以降のイベントを発音
+    // 伴奏とメロディを小節単位でスケジュール
+    var currBar = Math.floor(currentCycleTime / secPerBar);
+    var nextBar = (currBar + 1) % data.bars;
+
+    // 各バーの頭で和音とベースを発音
+    var chord = data.chords[currBar % data.chords.length];
+    if (chord && (!chord._lastSched || Math.abs(now - chord._lastSched) > secPerBar * 0.8)) {
+      chord._lastSched = now;
+      var barStartTime = now + 0.02;
+
+      // 1. 低音ベース / パルス
+      if (currentBgmKey === 'daniel') {
+        // 心拍パルス (トクン…トクン…)
+        playSynthVoice(chord.bass, barStartTime, 0.18, "sine", 0.7);
+        playSynthVoice(chord.bass * 0.85, barStartTime + 0.25, 0.15, "sine", 0.5);
+        playSynthVoice(chord.bass, barStartTime + secPerBeat * 2, 0.18, "sine", 0.6);
+        playSynthVoice(chord.bass * 0.85, barStartTime + secPerBeat * 2 + 0.25, 0.15, "sine", 0.4);
+      } else if (currentBgmKey === 'ren') {
+        // 16分パルシブベース
+        for (var p = 0; p < 8; p++) {
+          var pTime = barStartTime + p * (secPerBeat / 2);
+          playSynthVoice(chord.bass, pTime, secPerBeat * 0.35, "sawtooth", (p % 2 === 0 ? 0.6 : 0.4));
+        }
+      } else if (currentBgmKey === 'tawakichi') {
+        // マリオ風スタッカート・ウォーキングベース（ポン・チャッ・ポン・チャッ！）
+        for (var b = 0; b < 4; b++) {
+          var bTime = barStartTime + b * secPerBeat;
+          var bFreq = (b % 2 === 0) ? chord.bass : chord.bass * 1.5;
+          playSynthVoice(bFreq, bTime, secPerBeat * 0.45, "square", 0.55);
+        }
+      } else if (currentBgmKey === 'menu') {
+        // サイバーパンク・アルペジオパルス
+        for (var b = 0; b < 4; b++) {
+          var bTime = barStartTime + b * secPerBeat;
+          playSynthVoice(chord.bass, bTime, secPerBeat * 0.4, "triangle", 0.5);
+          if (chord.pad && chord.pad.length > 0) {
+            playSynthVoice(chord.pad[b % chord.pad.length], bTime + (secPerBeat / 2), secPerBeat * 0.35, "sine", 0.35);
+          }
+        }
+      } else {
+        // 深い持続ベース (title, elena, climax, ending)
+        playSynthVoice(chord.bass, barStartTime, secPerBar * 0.95, "triangle", 0.65);
+      }
+
+      // 2. 温かい和音パッド
+      if (chord.pad) {
+        for (var i = 0; i < chord.pad.length; i++) {
+          playSynthVoice(chord.pad[i], barStartTime, secPerBar * 0.92, "sine", 0.35);
+        }
+      }
+
+      // 3. メロディライン
+      for (var m = 0; m < data.melody.length; m++) {
+        var mel = data.melody[m];
+        if (mel.bar === currBar) {
+          var melTime = barStartTime + mel.beat * secPerBeat;
+          var melType = mel.type || data.melodyType || "triangle";
+          var melVel = (mel.vel !== undefined) ? mel.vel : 0.8;
+          playSynthVoice(mel.freq, melTime, mel.dur, melType, melVel);
+        }
+      }
+    }
+  }
+
+  function playBGM(key) {
+    if (!key) return;
+    initBgmNodes();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+
+    // 既に同一曲再生中なら継続
+    if (currentBgmKey === key && bgmTimerId) return;
+
+    currentBgmKey = key;
+    bgmStartTime = 0;
+
+    // 既存BGMループ停止
+    if (bgmTimerId) {
+      clearInterval(bgmTimerId);
+      bgmTimerId = null;
+    }
+
+    // 楽曲固有の可変ローパスフィルター周波数を適用（タワ吉の8bitハイトーンやエンディングのきらめきを開放）
+    var data = BGM_DATA[key];
+    if (bgmFilter && ctx && data) {
+      var targetFilter = data.filterFreq || 800;
+      var curFilterVal = bgmFilter.frequency.value || 800;
+      bgmFilter.frequency.setValueAtTime(curFilterVal, ctx.currentTime);
+      bgmFilter.frequency.exponentialRampToValueAtTime(Math.max(100, Math.min(10000, targetFilter)), ctx.currentTime + 0.3);
+    }
+
+    // フェードイン
+    if (bgmMasterGain) {
+      var now = ctx.currentTime;
+      var targetGain = isBgmEnabled && !isMuted ? bgmVolume : 0.0001;
+      bgmMasterGain.gain.setValueAtTime(0.0001, now);
+      bgmMasterGain.gain.linearRampToValueAtTime(targetGain, now + 0.6);
+    }
+
+    // 初回即時発音 & タイマー起動
+    scheduleBgmEvents();
+    bgmTimerId = setInterval(scheduleBgmEvents, 120);
+  }
+
+  function stopBGM(fadeSec) {
+    var fTime = (typeof fadeSec === "number") ? fadeSec : 0.5;
+    if (bgmMasterGain && ctx) {
+      var now = ctx.currentTime;
+      bgmMasterGain.gain.setValueAtTime(bgmMasterGain.gain.value, now);
+      bgmMasterGain.gain.linearRampToValueAtTime(0.0001, now + fTime);
+    }
+    setTimeout(function() {
+      if (bgmTimerId) {
+        clearInterval(bgmTimerId);
+        bgmTimerId = null;
+      }
+      currentBgmKey = null;
+    }, Math.round(fTime * 1000) + 50);
+  }
+
+  function toggleBgm() {
+    isBgmEnabled = !isBgmEnabled;
+    try {
+      localStorage.setItem("pj_bgm_enabled", String(isBgmEnabled));
+    } catch (e) {}
+
+    if (bgmMasterGain && ctx) {
+      var now = ctx.currentTime;
+      var targetGain = isBgmEnabled && !isMuted ? bgmVolume : 0.0001;
+      bgmMasterGain.gain.setValueAtTime(bgmMasterGain.gain.value, now);
+      bgmMasterGain.gain.linearRampToValueAtTime(targetGain, now + 0.3);
+    }
+    if (isBgmEnabled && currentBgmKey && !bgmTimerId) {
+      playBGM(currentBgmKey);
+    }
+    return isBgmEnabled;
+  }
+
+  function setBgmVolume(val) {
+    bgmVolume = Math.max(0.0, Math.min(1.0, val));
+    if (bgmMasterGain && ctx && isBgmEnabled && !isMuted) {
+      bgmMasterGain.gain.setValueAtTime(bgmVolume, ctx.currentTime);
+    }
+  }
+
+  return {
+    init: init,
+    play: play,
+    toggleMute: toggleMute,
+    playBGM: playBGM,
+    stopBGM: stopBGM,
+    toggleBgm: toggleBgm,
+    setBgmVolume: setBgmVolume,
+    isBgmEnabled: function() { return isBgmEnabled; },
+    getCurrentBgm: function() { return currentBgmKey; }
+  };
+})();
+</script>
